@@ -831,7 +831,11 @@ async def test_gateway_actor_continuation_with_tool_returned_image_appends_media
     import uni_agent.gateway.session.codec as codec_mod
     from uni_agent.gateway.config import GatewayActorConfig
     from uni_agent.gateway.gateway import _GatewayActor
-    from verl.utils.tokenizer.chat_template import apply_chat_template, initialize_system_prompt
+    from verl.utils.tokenizer.chat_template import (
+        apply_chat_template,
+        initialize_system_prompt,
+        initialize_turn_separator,
+    )
 
     monkeypatch.setattr(codec_mod, "_extract_tool_calls_with_sglang_or_vllm", fake_tool_call_dispatch)
     processor = FakeProcessor()
@@ -925,7 +929,8 @@ async def test_gateway_actor_continuation_with_tool_returned_image_appends_media
         do_sample_frames=False,
     )["input_ids"][0].tolist()
     system_prompt = initialize_system_prompt(processor)
-    expected_incremental_ids = incremental_prompt_ids[len(system_prompt) :]
+    turn_separator = initialize_turn_separator(processor)
+    expected_incremental_ids = turn_separator + incremental_prompt_ids[len(system_prompt) :]
     expected_prompt_ids = initial_prompt_ids + [ord(char) for char in tool_call_text] + expected_incremental_ids
     assert second_call["prompt_ids"] == expected_prompt_ids
 
