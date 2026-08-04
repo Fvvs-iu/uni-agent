@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from verl.utils.tokenizer import normalize_token_ids
 from verl.utils.tokenizer.chat_template import apply_chat_template as _apply_chat_template
-from verl.utils.tokenizer.chat_template import initialize_system_prompt
+from verl.utils.tokenizer.chat_template import initialize_system_prompt, initialize_turn_separator
 
 logger = logging.getLogger("gateway")
 
@@ -39,6 +39,29 @@ _VLLM_TOOL_PARSER_ALIASES = {
     "qwen25": "qwen3_xml",
     "qwen3": "qwen3_xml",
 }
+
+
+def initialize_generation_prompt(processing_class, **apply_chat_template_kwargs) -> list[int]:
+    """Initialize the token suffix inserted by ``add_generation_prompt=True``."""
+    without_generation_prompt = normalize_token_ids(
+        _apply_chat_template(
+            processing_class,
+            [{"role": "user", "content": ""}],
+            add_generation_prompt=False,
+            **apply_chat_template_kwargs,
+        )
+    )
+    with_generation_prompt = normalize_token_ids(
+        _apply_chat_template(
+            processing_class,
+            [{"role": "user", "content": ""}],
+            add_generation_prompt=True,
+            **apply_chat_template_kwargs,
+        )
+    )
+    if with_generation_prompt[: len(without_generation_prompt)] != without_generation_prompt:
+        raise ValueError("Generation prompt is not a stable token suffix")
+    return with_generation_prompt[len(without_generation_prompt) :]
 
 
 def _canonicalize_tool_arguments_for_comparison(arguments: Any) -> tuple[str, Any]:
@@ -141,11 +164,30 @@ class MessageCodec:
         self._vision_info_extractor = vision_info_extractor or self._default_vision_info_extractor
         self._vision_info_extractor_kwargs = dict(vision_info_extractor_kwargs or {})
         self._apply_chat_template_kwargs = dict(apply_chat_template_kwargs or {})
+        processing_class = self._processor if self._processor is not None else tokenizer
         self._system_prompt = initialize_system_prompt(
-            self._processor if self._processor is not None else tokenizer,
+            processing_class,
+            **self._apply_chat_template_kwargs,
+        )
+        self._generation_prompt = initialize_generation_prompt(
+            processing_class,
+            **self._apply_chat_template_kwargs,
+        )
+        self._turn_separator = initialize_turn_separator(
+            processing_class,
             **self._apply_chat_template_kwargs,
         )
         self._tool_parser_name = tool_parser_name
+
+    @property
+    def generation_prompt(self) -> list[int]:
+        """Return the configured chat template's generation-prompt token suffix."""
+        return list(self._generation_prompt)
+
+    @property
+    def turn_separator(self) -> list[int]:
+        """Return the configured chat template's inter-turn separator tokens."""
+        return list(self._turn_separator)
 
     async def _default_vision_info_extractor(
         self,
