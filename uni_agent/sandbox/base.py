@@ -151,7 +151,7 @@ class Sandbox(abc.ABC):
 
     Providers implement :meth:`start`, :meth:`stop` and the :meth:`_exec`
     primitive; the public :meth:`exec` wraps ``_exec`` with a shared error
-    policy, and the ``bash -lc`` helper and exec-based file transfer build on
+    policy, and the non-login ``bash -c`` helper and exec-based file transfer build on
     top. :meth:`expose_port` is optional (raises until a provider implements it).
     """
 
@@ -299,8 +299,8 @@ class Sandbox(abc.ABC):
         workdir: str | None = None,
         env: dict[str, str] | None = None,
     ) -> ExecResult:
-        """Convenience: run ``script`` through ``bash -lc``."""
-        return await self.exec(["bash", "-lc", script], timeout=timeout, workdir=workdir, env=env)
+        """Convenience: run ``script`` through a non-login ``bash -c`` shell."""
+        return await self.exec(["bash", "-c", script], timeout=timeout, workdir=workdir, env=env)
 
     async def expose_port(self, port: int) -> str:
         """Return a host-reachable URL/addr for an in-sandbox ``port``.
