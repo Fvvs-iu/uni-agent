@@ -1,0 +1,17 @@
+# Recipe-local Task/Agent registration.
+- name: deepeyes
+  sandbox:
+    provider: local
+  agent:
+    name: image_zoom_react
+    max_turns: 4
+    request_timeout_seconds: 300
+    system_prompt: >-
+      You are a helpful assistant. You can call functions to assist with the user query.
+      Important: You must call only one function at a time.
+    image_tool:
+      min_dimension: 28
+      max_aspect_ratio: 100
+      coordinate_scale: 1000
+      fetch_timeout_seconds: 30
+    model: {}
