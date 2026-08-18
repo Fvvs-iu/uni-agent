@@ -1130,8 +1130,11 @@ class GatewayAgentFramework(AgentFramework):
 
         extra_fields = dict(trajectory.extra_fields)
         extra_fields.pop("materialization_reason", None)
-        field.update(extra_fields)
-        # Framework-owned masks must win over same-named Gateway extra fields.
+        # Match verl v1's AgentLoopOutput TransferQueue schema. Consumers such
+        # as validation metrics and replay-buffer filtering read
+        # extra_fields.reward_extra_info; flattening this mapping into ``field``
+        # silently drops those metrics from their expected location.
+        field["extra_fields"] = extra_fields
         field["response_mask"] = response_mask
         field["loss_mask"] = response_mask
         field.pop("multi_modal_data", None)

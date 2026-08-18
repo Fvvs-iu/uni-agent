@@ -358,7 +358,13 @@ def _trajectory(
     )
 
 
-def _install_fake_score(monkeypatch, *, score_from_sample_fields=None, default_score=1.0):
+def _install_fake_score(
+    monkeypatch,
+    *,
+    score_from_sample_fields=None,
+    default_score=1.0,
+    reward_extra_info: dict[str, object] | None = None,
+):
     """Replace GatewayAgentFramework._score_trajectories with a fake.
 
     Keeps ``generate_sequences`` tests focused on TQ output by returning the
@@ -371,7 +377,7 @@ def _install_fake_score(monkeypatch, *, score_from_sample_fields=None, default_s
             score = float(score_from_sample_fields(sample_fields))
         else:
             score = float(default_score)
-        return [(score, {})] * len(trajectories)
+        return [(score, dict(reward_extra_info or {}))] * len(trajectories)
 
     monkeypatch.setattr(GatewayAgentFramework, "_score_trajectories", fake_score)
 
@@ -615,6 +621,7 @@ async def test_generate_sequences_writes_tq_schema_for_each_session(monkeypatch,
     _install_fake_score(
         monkeypatch,
         score_from_sample_fields=lambda sf: sf["extra_info"]["index"] + 0.25,
+        reward_extra_info={"acc": 1.0, "format": 0.8, "tool": 1.0, "tool_calls": 2},
     )
 
     framework = await _build_framework_with_agent_runners(
@@ -691,6 +698,10 @@ async def test_generate_sequences_writes_tq_schema_for_each_session(monkeypatch,
     assert tu.get(fields, "agent_name") == ["deepeyes"]
     assert tu.get(fields, "session_id") == [0]
     assert tu.get(fields, "global_steps") == [7]
+    assert tu.get(fields, "extra_fields") == [
+        {"reward_extra_info": {"acc": 1.0, "format": 0.8, "tool": 1.0, "tool_calls": 2}}
+    ]
+    assert "reward_extra_info" not in fields.keys()
     assert fields["num_turns"].tolist() == [2]
     assert "multi_modal_data" not in fields.keys()
 
@@ -729,7 +740,12 @@ async def test_generate_sequences_masks_unfinished_trajectory_without_dropping_i
     assert batch["tags"][0]["status"] == "success"
     assert "finished" not in batch["tags"][0]
     assert "finished" not in batch["fields"].keys()
-    assert tu.get(batch["fields"], "reward_extra_info") == [{}]
+    [extra_fields] = tu.get(batch["fields"], "extra_fields")
+    assert set(extra_fields) == {"response_mask", "loss_mask", "reward_extra_info"}
+    assert torch.equal(extra_fields["response_mask"], torch.ones(3, dtype=torch.long))
+    assert torch.equal(extra_fields["loss_mask"], torch.ones(3, dtype=torch.long))
+    assert extra_fields["reward_extra_info"] == {}
+    assert "reward_extra_info" not in batch["fields"].keys()
     assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "finished"}}]
 
 
