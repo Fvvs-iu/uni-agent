@@ -6,10 +6,11 @@ import asyncio
 import logging
 from typing import Any
 
-from uni_agent.tasks import Task, TaskConfig, TaskResult
-from uni_agent.tasks.registry import register_task
+from pydantic import Field
 
-from .reward import compute_score
+from ..base import Task, TaskConfig, TaskResult
+from ..registry import register_task
+from .reward import DeepEyesRewardConfig, compute_score
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,10 @@ class DeepEyesTaskConfig(TaskConfig):
     """One DeepEyes sample plus the configured image-solving Agent."""
 
     name: str = "deepeyes"
+    question: str = Field(min_length=1)
+    ground_truth: str
+    data_source: str = "deepeyes"
+    reward: DeepEyesRewardConfig = Field(default_factory=DeepEyesRewardConfig)
 
 
 @register_task("deepeyes")
@@ -28,15 +33,7 @@ class DeepEyesTask(Task):
 
     async def run(self) -> TaskResult:
         cfg: DeepEyesTaskConfig = self.config  # type: ignore[assignment]
-        metadata = cfg.metadata
-        question = metadata.get("question")
-        ground_truth = metadata.get("ground_truth")
-        if not isinstance(question, str) or not question.strip():
-            raise ValueError("DeepEyesTask requires metadata.question")
-        if ground_truth is None:
-            raise ValueError("DeepEyesTask requires metadata.ground_truth")
-
-        logger.info("DeepEyes task start: question=%s", question.strip())
+        logger.info("DeepEyes task start: question=%s", cfg.question.strip())
 
         async with self.build_sandbox() as sandbox:
             agent_result = await self.build_agent().run(sandbox=sandbox, messages=cfg.prompt)
@@ -44,7 +41,7 @@ class DeepEyesTask(Task):
         final_answer_value = agent_result.output.get("final_answer")
         final_answer = final_answer_value if isinstance(final_answer_value, str) else None
         reward_context: dict[str, Any] = {
-            "question": question,
+            "question": cfg.question,
             "finished": agent_result.finished is True,
             "final_answer": final_answer,
             "tool_calls": agent_result.info.get("tool_calls", 0),
@@ -53,10 +50,11 @@ class DeepEyesTask(Task):
         }
         score = await asyncio.to_thread(
             compute_score,
-            str(metadata.get("data_source", "deepeyes")),
+            cfg.data_source,
             final_answer or "",
-            str(ground_truth),
+            cfg.ground_truth,
             reward_context,
+            reward_config=cfg.reward,
         )
 
         extra_info: dict[str, Any] = {

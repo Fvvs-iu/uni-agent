@@ -1,17 +1,17 @@
 # DeepEyes
 
 This example trains a multimodal policy to answer visual questions with an
-image-cropping tool. It uses Uni-Agent's decoupled `Task`, `Agent`, and `Tool`
-interfaces while the Gateway records the model interactions for verl GRPO.
+image-cropping tool. The reusable DeepEyes `Task`, `Agent`, and `Tool` live in
+`uni_agent`; this directory contains only the verl training recipe.
 
 ## Architecture
 
 ```text
 DeepEyesDataset
   -> TaskConfig serialized in tools_kwargs
-  -> run_deepeyes_task
+  -> uni_agent.framework.task_runner.run_task
   -> DeepEyesTask
-  -> ImageZoomReActAgent
+  -> DeepEyesAgent
   -> ImageZoomInTool
   -> LLM-as-a-Judge reward
   -> Gateway reward_info
@@ -39,6 +39,26 @@ image content parts. It reads the reference answer from
 `reward_model.ground_truth` and the question from `extra_info.question` or the
 first user message.
 
+## Prepare data
+
+Download the official visual-toolbox Parquet and create a training/validation
+split:
+
+```bash
+python -m uni_agent.tasks.deepeyes.preprocess \
+  --local-save-dir /path/to/deepeyes-data
+```
+
+This writes `train.parquet`, `val.parquet`, and `manifest.json`. The manifest
+records the selected source row positions and dataset indices. To prepare an
+already downloaded source file without network access, use:
+
+```bash
+python -m uni_agent.tasks.deepeyes.preprocess \
+  --local-save-dir /path/to/deepeyes-data \
+  --source-file /path/to/data_0.1.2_visual_toolbox_v2.parquet
+```
+
 ## Train
 
 Run commands from the repository root after preparing the accelerator runtime
@@ -54,10 +74,11 @@ export LLM_AS_A_JUDGE_MODEL=judge-model-name
 bash examples/deepeyes/train_deepeyes.sh
 ```
 
-The script first sends a small semantic request to the Judge. Set
-`CHECK_JUDGE=0` only when that preflight is intentionally handled elsewhere.
-Use `DRY_RUN=1` to print the fully resolved training command. Additional Hydra
-overrides can be appended to the command line.
+The script first sends a small semantic request to the Judge and then runs the
+verl trainer in the foreground. Set `CHECK_JUDGE=0` only when that preflight is
+intentionally handled elsewhere. Use `DRY_RUN=1` to print the fully resolved
+training command. Additional Hydra overrides can be appended to the command
+line.
 
 The defaults form a one-device smoke configuration. A larger run can override
 the topology and batching without editing the script, for example:
@@ -91,17 +112,24 @@ reward = 0.8 * accuracy + 0.2 * format + 1.2 * tool
 - `tool` is `1` only when at least one crop call succeeds and the final answer
   is correct. A serialized or failed tool call receives no tool bonus.
 
-Validation also reports `acc`, `format`, `tool`, `tool_calls`,
-`tool_successes`, `tool_errors`, completion status, and token counts through
-`reward_extra_info`.
+The formula weights are fixed in `reward.py`. The answer-length limit, Judge
+timeout/retry behavior, strict mode, and generation parameters are declared
+under `reward` in `task_config.yaml`. Judge `base_url`, `model_name`, and
+`api_key` can also be declared there; when omitted, they are resolved from
+`LLM_AS_A_JUDGE_BASE`, `LLM_AS_A_JUDGE_MODEL`, and
+`LLM_AS_A_JUDGE_API_KEY`.
+
+The generic task runner reports reward, accuracy, and completion status to the
+training framework. The Task also retains format, tool-use, and token metrics
+in `TaskResult.extra_info` and the runtime logs.
 
 ## Implementation map
 
 - `dataset.py`: parquet adapter and per-sample TaskConfig construction.
-- `task.py`: task execution and reward calculation.
-- `task_agent.py`: multimodal policy/tool loop.
-- `task_tool.py`: image crop tool.
-- `reward.py`: Judge prompt, answer parsing, and reward composition.
-- `task_runner.py`: task registration and strict reward publication.
 - `task_config.yaml`: run-wide Task and Agent defaults.
-- `train_deepeyes.sh`: verl v1 GRPO entry point.
+- `train_deepeyes.sh`: foreground verl v1 GRPO entry point.
+- `uni_agent/agents/deepeyes/agent.py`: multimodal policy loop and message conversion.
+- `uni_agent/agents/deepeyes/tool.py`: image decoding, crop validation, and crop tool.
+- `uni_agent/tasks/deepeyes/task.py`: sample lifecycle and reward invocation.
+- `uni_agent/tasks/deepeyes/reward.py`: configurable Judge and reward composition.
+- `uni_agent/tasks/deepeyes/preprocess.py`: official dataset download and train/validation split.

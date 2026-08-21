@@ -1,4 +1,4 @@
-"""Dataset adapter for the decoupled DeepEyes Task/Agent example."""
+"""Runtime dataset adapter for DeepEyes multimodal training."""
 
 from __future__ import annotations
 
@@ -13,14 +13,8 @@ from typing import Any
 import torch
 from PIL import Image
 
+from uni_agent.agents.deepeyes import DEFAULT_SYSTEM_PROMPT, messages_for_gateway
 from verl.utils.dataset.rl_dataset import RLHFDataset
-
-from .message_utils import messages_for_gateway
-
-SYSTEM_PROMPT = (
-    "You are a helpful assistant. You can call functions to assist with the user query. "
-    "Important: You must call only one function at a time."
-)
 
 
 class DeepEyesDataset(RLHFDataset):
@@ -42,7 +36,7 @@ class DeepEyesDataset(RLHFDataset):
 
         raw_prompt = messages_for_gateway(
             [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_messages[0]["content"]},
             ]
         )
@@ -71,12 +65,10 @@ class DeepEyesDataset(RLHFDataset):
         task_config = {
             "name": "deepeyes",
             "prompt": copy.deepcopy(raw_prompt),
-            "metadata": {
-                "question": extra_info["question"],
-                "ground_truth": reward_model["ground_truth"],
-                "data_source": data_source,
-                "index": sample_index,
-            },
+            "question": extra_info["question"],
+            "ground_truth": str(reward_model["ground_truth"]),
+            "data_source": data_source,
+            "metadata": {"index": sample_index},
         }
 
         row.pop(self.image_key, None)
@@ -89,7 +81,6 @@ class DeepEyesDataset(RLHFDataset):
         row["data_source"] = data_source
         row["index"] = sample_index
         row["tools_kwargs"] = {"task": task_config}
-        row["agent_name"] = "task"
         # TensorDict batches still require at least one tensor-valued field.
         row["dummy_tensor"] = torch.tensor([0], dtype=torch.uint8)
         return row

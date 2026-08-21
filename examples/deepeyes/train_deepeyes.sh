@@ -36,6 +36,7 @@ MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-4096}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-1}"
+ENFORCE_EAGER="${ENFORCE_EAGER:-false}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.45}"
 NUM_WARMUP_BATCHES="${NUM_WARMUP_BATCHES:-1}"
 MAX_OFF_POLICY_THRESHOLD="${MAX_OFF_POLICY_THRESHOLD:-8}"
@@ -46,6 +47,8 @@ TOTAL_EPOCHS="${TOTAL_EPOCHS:-10}"
 VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-true}"
 TEST_FREQ="${TEST_FREQ:-10}"
 SAVE_FREQ="${SAVE_FREQ:--1}"
+RESUME_MODE="${RESUME_MODE:-auto}"
+RESUME_FROM_PATH="${RESUME_FROM_PATH:-}"
 PROJECT_NAME="${PROJECT_NAME:-deepeyes}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-deepeyes_grpo}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-${REPO_ROOT}/checkpoints/${PROJECT_NAME}/${EXPERIMENT_NAME}}"
@@ -55,10 +58,9 @@ export LLM_AS_A_JUDGE_BASE
 export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/verl${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export HYDRA_FULL_ERROR="${HYDRA_FULL_ERROR:-1}"
-export DEEPEYES_JUDGE_STRICT="${DEEPEYES_JUDGE_STRICT:-1}"
 
 if [[ "${DRY_RUN:-0}" != "1" && "${CHECK_JUDGE:-1}" == "1" ]]; then
-    "${PYTHON_BIN}" -m examples.deepeyes.reward
+    "${PYTHON_BIN}" -m uni_agent.tasks.deepeyes.reward
 fi
 
 TRAIN_ARGS=(
@@ -121,7 +123,7 @@ TRAIN_ARGS=(
     actor_rollout_ref.rollout.tensor_model_parallel_size=1
     actor_rollout_ref.rollout.gpu_memory_utilization="${GPU_MEMORY_UTILIZATION}"
     actor_rollout_ref.rollout.calculate_log_probs=true
-    actor_rollout_ref.rollout.enforce_eager=true
+    actor_rollout_ref.rollout.enforce_eager="${ENFORCE_EAGER}"
     actor_rollout_ref.rollout.free_cache_engine=true
     actor_rollout_ref.rollout.enable_chunked_prefill=false
     actor_rollout_ref.rollout.enable_prefix_caching=false
@@ -140,12 +142,13 @@ TRAIN_ARGS=(
     ++actor_rollout_ref.rollout.custom.agent_framework.log_dir="${AGENT_LOG_DIR}"
     ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode=false
     ++actor_rollout_ref.rollout.custom.agent_framework.use_reward_loop_worker=false
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_fqn=examples.deepeyes.task_runner.run_deepeyes_task
+    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_fqn=uni_agent.framework.task_runner.run_task
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.dispatch_mode=ray_task
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.max_concurrent_sessions="${CONCURRENCY}"
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.trajectory_selection=longest
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.task_config_path="${TASK_CONFIG}"
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.model_name="${SERVED_MODEL_NAME}"
+    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.report_reward=true
     reward.reward_manager.name=naive
     trainer.device="${DEVICE}"
     trainer.nnodes="${NNODES}"
@@ -158,7 +161,8 @@ TRAIN_ARGS=(
     trainer.val_before_train="${VAL_BEFORE_TRAIN}"
     trainer.test_freq="${TEST_FREQ}"
     trainer.save_freq="${SAVE_FREQ}"
-    trainer.resume_mode=disable
+    trainer.resume_mode="${RESUME_MODE}"
+    trainer.resume_from_path="${RESUME_FROM_PATH:-null}"
     trainer.default_local_dir="${CHECKPOINT_DIR}"
 )
 

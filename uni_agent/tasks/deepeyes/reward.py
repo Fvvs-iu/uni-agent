@@ -1,36 +1,66 @@
-"""LLM-as-a-Judge reward used by DeepEyes."""
+"""LLM-as-a-Judge reward for the DeepEyes task."""
 
 from __future__ import annotations
 
 import logging
 import os
-import random
 import re
 from functools import lru_cache
 from typing import Any
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_JUDGE_BASE = "http://127.0.0.1:18901/v1"
-ACCURACY_WEIGHT = 0.8
-FORMAT_WEIGHT = 0.2
-TOOL_WEIGHT = 1.2
-MAX_ANSWER_CHARS = 1000
+
+class DeepEyesJudgeConfig(BaseModel):
+    """Connection and generation settings for the semantic Judge."""
+
+    base_url: str | None = None
+    api_key: str | None = None
+    model_name: str | None = None
+    timeout_seconds: float = Field(default=120.0, gt=0.0)
+    max_retries: int = Field(default=2, ge=0)
+    strict: bool = True
+    temperature: float = Field(default=0.1, ge=0.0)
+    preflight_max_tokens: int = Field(default=8, gt=0)
+    enable_thinking: bool = False
+
+    model_config = ConfigDict(extra="forbid")
 
 
-@lru_cache(maxsize=1)
-def _get_judge_client() -> tuple[Any | None, str]:
-    base_url = os.environ.get("LLM_AS_A_JUDGE_BASE", DEFAULT_JUDGE_BASE).rstrip("/")
-    model_name = os.environ.get("LLM_AS_A_JUDGE_MODEL", "")
-    timeout = float(os.environ.get("LLM_AS_A_JUDGE_TIMEOUT_SECONDS", "120"))
-    max_retries = int(os.environ.get("LLM_AS_A_JUDGE_MAX_RETRIES", "2"))
+class DeepEyesRewardConfig(BaseModel):
+    """DeepEyes reward limits and Judge configuration."""
+
+    max_answer_chars: int = Field(default=1000, gt=0)
+    judge: DeepEyesJudgeConfig = Field(default_factory=DeepEyesJudgeConfig)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def _judge_settings(config: DeepEyesJudgeConfig) -> tuple[str, str, str, float, int]:
+    base_url = (config.base_url or os.environ.get("LLM_AS_A_JUDGE_BASE", "")).rstrip("/")
+    if not base_url:
+        raise ValueError("DeepEyes Judge requires reward.judge.base_url or LLM_AS_A_JUDGE_BASE")
+    api_key = config.api_key or os.environ.get("LLM_AS_A_JUDGE_API_KEY", "EMPTY")
+    model_name = config.model_name or os.environ.get("LLM_AS_A_JUDGE_MODEL", "")
+    return base_url, api_key, model_name, config.timeout_seconds, config.max_retries
+
+
+@lru_cache(maxsize=8)
+def _build_judge_client(
+    base_url: str,
+    api_key: str,
+    model_name: str,
+    timeout: float,
+    max_retries: int,
+) -> tuple[Any, str]:
     try:
         from openai import OpenAI
 
         client = OpenAI(
-            api_key=os.environ.get("LLM_AS_A_JUDGE_API_KEY", "EMPTY"),
+            api_key=api_key,
             base_url=base_url,
             timeout=timeout,
             max_retries=max_retries,
@@ -45,16 +75,25 @@ def _get_judge_client() -> tuple[Any | None, str]:
         if not model_name:
             raise RuntimeError(f"judge service at {base_url} returned no models")
         return client, model_name
-    except Exception as error:  # noqa: BLE001 - handled by strict/optional policy below
-        if _strict_judge():
-            raise RuntimeError(f"DeepEyes judge initialization failed for {base_url}: {error}") from error
+    except Exception as error:  # noqa: BLE001 - annotated with the service endpoint
+        raise RuntimeError(f"DeepEyes judge initialization failed for {base_url}: {error}") from error
+
+
+def _get_judge_client(config: DeepEyesJudgeConfig) -> tuple[Any | None, str]:
+    try:
+        return _build_judge_client(*_judge_settings(config))
+    except Exception as error:  # noqa: BLE001 - handled by the configured strict policy
+        if config.strict:
+            raise
         logger.warning("DeepEyes judge unavailable; returning zero rewards: %s", error)
         return None, ""
 
 
-def check_judge() -> str:
+def check_judge(config: DeepEyesRewardConfig | None = None) -> str:
     """Run a real semantic judgement and return the selected model name."""
-    client, model_name = _get_judge_client()
+    reward_config = config or DeepEyesRewardConfig()
+    judge_config = reward_config.judge
+    client, model_name = _get_judge_client(judge_config)
     if client is None or not model_name:
         raise RuntimeError("DeepEyes judge is unavailable")
     try:
@@ -71,10 +110,9 @@ def check_judge() -> str:
                     ),
                 },
             ],
-            seed=0,
-            temperature=0.1,
-            max_tokens=8,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            temperature=judge_config.temperature,
+            max_tokens=judge_config.preflight_max_tokens,
+            extra_body={"chat_template_kwargs": {"enable_thinking": judge_config.enable_thinking}},
         )
     except Exception as error:  # noqa: BLE001 - preflight must fail closed
         raise RuntimeError(f"DeepEyes judge completion preflight failed: {error}") from error
@@ -84,9 +122,17 @@ def check_judge() -> str:
     return model_name
 
 
-def compute_score(data_source: str, solution_str: str, ground_truth: str, extra_info=None) -> dict[str, float]:
+def compute_score(
+    data_source: str,
+    solution_str: str,
+    ground_truth: str,
+    extra_info=None,
+    *,
+    reward_config: DeepEyesRewardConfig | None = None,
+) -> dict[str, float]:
     """Return DeepEyes accuracy, format, and correct-tool-use reward components."""
     del data_source
+    config = reward_config or DeepEyesRewardConfig()
     reward_context = extra_info or {}
     question_text = reward_context.get("question", "")
     if not question_text:
@@ -126,7 +172,7 @@ def compute_score(data_source: str, solution_str: str, ground_truth: str, extra_
     # according to the original DeepEyes reward, a very long answer can push
     # the Judge prompt beyond its serving context window and fail the entire
     # rollout instead of simply receiving the intended format penalty.
-    if len(answer_text) >= MAX_ANSWER_CHARS:
+    if len(answer_text) >= config.max_answer_chars:
         return _reward_result(
             accuracy_reward=0.0,
             format_error=True,
@@ -138,7 +184,7 @@ def compute_score(data_source: str, solution_str: str, ground_truth: str, extra_
             answer_tags=answer_tags,
         )
 
-    client, model_name = _get_judge_client()
+    client, model_name = _get_judge_client(config.judge)
     if client is None or not model_name:
         return _reward_result(
             accuracy_reward=0.0,
@@ -166,12 +212,11 @@ def compute_score(data_source: str, solution_str: str, ground_truth: str, extra_
                     ),
                 },
             ],
-            seed=random.randint(0, 1_000_000),
-            temperature=0.1,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            temperature=config.judge.temperature,
+            extra_body={"chat_template_kwargs": {"enable_thinking": config.judge.enable_thinking}},
         )
-    except Exception as error:  # noqa: BLE001 - policy is controlled by DEEPEYES_JUDGE_STRICT
-        if _strict_judge():
+    except Exception as error:  # noqa: BLE001 - policy is controlled by the task config
+        if config.judge.strict:
             raise RuntimeError(f"DeepEyes judge request failed: {error}") from error
         logger.warning("DeepEyes judge request failed; returning zero rewards: %s", error)
         return _reward_result(
@@ -222,7 +267,7 @@ def _reward_result(
     # failed execution alone must not receive the bonus.
     tool_reward = 1.0 if has_successful_tool_usage and accuracy_reward > 0.5 else 0.0
     format_reward = -1.0 if format_error else 0.0
-    final_score = ACCURACY_WEIGHT * accuracy_reward + FORMAT_WEIGHT * format_reward + TOOL_WEIGHT * tool_reward
+    final_score = 0.8 * accuracy_reward + 0.2 * format_reward + 1.2 * tool_reward
     return {
         "score": final_score if score_override is None else score_override,
         "acc": accuracy_reward,
@@ -255,15 +300,6 @@ def _has_tool_usage(solution_str: str) -> bool:
         re.search(r"<tool_call>.*?</tool_call>", solution_str, re.DOTALL)
         or re.search(r"<tool_response>.*?</tool_response>", solution_str, re.DOTALL)
     )
-
-
-def _strict_judge() -> bool:
-    value = os.environ.get("DEEPEYES_JUDGE_STRICT", "1").strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError("DEEPEYES_JUDGE_STRICT must be a boolean value")
 
 
 def _extract_answer(solution_str: str) -> tuple[str, bool]:
