@@ -1,1 +1,0 @@
-"""Decoupled DeepEyes training example."""

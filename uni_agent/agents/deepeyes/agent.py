@@ -1,20 +1,21 @@
-"""Recipe-local image ReAct agent used by DeepEyes."""
+"""DeepEyes multimodal ReAct agent."""
 
 from __future__ import annotations
 
+import base64
 import logging
+from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
+from PIL import Image
 from pydantic import Field
 
-from uni_agent.agents import Agent, AgentConfig, AgentResult
 from uni_agent.agents.react.model import OpenAICompatibleChatModel
-from uni_agent.agents.registry import register_agent
 from uni_agent.tools import ToolResult, Toolbox
 
-from .image_utils import coerce_image
-from .message_utils import assistant_text, image_data_url, messages_for_gateway
-from .task_tool import ImageZoomInConfig, ImageZoomInResult, ImageZoomInTool
+from ..base import Agent, AgentConfig, AgentResult
+from ..registry import register_agent
+from .tool import ImageZoomInConfig, ImageZoomInResult, ImageZoomInTool, coerce_image
 
 if TYPE_CHECKING:
     from uni_agent.sandbox import Sandbox
@@ -27,10 +28,10 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 
-class ImageZoomReActConfig(AgentConfig):
+class DeepEyesAgentConfig(AgentConfig):
     """DeepEyes policy loop and image-tool settings."""
 
-    name: str = "image_zoom_react"
+    name: str = "deepeyes"
     max_turns: int = Field(default=4, gt=0)
     request_timeout_seconds: float = Field(default=300.0, gt=0.0)
     action_timeout_seconds: float | None = Field(default=None, gt=0.0)
@@ -38,11 +39,11 @@ class ImageZoomReActConfig(AgentConfig):
     image_tool: ImageZoomInConfig = Field(default_factory=ImageZoomInConfig)
 
 
-@register_agent("image_zoom_react")
-class ImageZoomReActAgent(Agent):
+@register_agent("deepeyes")
+class DeepEyesAgent(Agent):
     """Sequential multimodal ReAct loop whose only action is image zoom."""
 
-    config_model = ImageZoomReActConfig
+    config_model = DeepEyesAgentConfig
 
     async def run(
         self,
@@ -50,9 +51,9 @@ class ImageZoomReActAgent(Agent):
         sandbox: Sandbox,
         messages: list[dict[str, Any]],
     ) -> AgentResult:
-        cfg: ImageZoomReActConfig = self.config  # type: ignore[assignment]
+        cfg: DeepEyesAgentConfig = self.config  # type: ignore[assignment]
         if cfg.model.base_url is None:
-            raise ValueError("image_zoom_react: config.model.base_url is not set")
+            raise ValueError("deepeyes: config.model.base_url is not set")
 
         prompt = _with_system_prompt(messages, cfg.system_prompt)
         source_image = _first_image(prompt, timeout=cfg.image_tool.fetch_timeout_seconds)
@@ -203,3 +204,68 @@ def _tool_message(tool_call_id: str, result: ToolResult) -> dict[str, Any]:
     if not content:
         content.append({"type": "text", "text": ""})
     return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
+
+
+def messages_for_gateway(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return serializable OpenAI messages with canonical image URL blocks."""
+
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("raw_prompt must be a non-empty message list")
+    return [_message_for_gateway(message) for message in messages]
+
+
+def _message_for_gateway(message: Any) -> dict[str, Any]:
+    if not isinstance(message, dict):
+        raise TypeError("raw_prompt messages must be mappings")
+    normalized = dict(message)
+    content = normalized.get("content", "")
+    if isinstance(content, list):
+        normalized["content"] = [_content_part_for_gateway(part) for part in content]
+    elif not isinstance(content, str):
+        raise TypeError("message content must be text or a content-part list")
+    return normalized
+
+
+def _content_part_for_gateway(part: Any) -> Any:
+    if not isinstance(part, dict):
+        return part
+    image_keys = {"image", "image_url", "bytes"}
+    if part.get("type") not in {"image", "image_url"} and not image_keys.intersection(part):
+        return dict(part)
+    if "image" in part:
+        payload = part["image"]
+    elif "bytes" in part:
+        payload = {"bytes": part["bytes"]}
+    else:
+        image_url = part.get("image_url")
+        payload = image_url.get("url") if isinstance(image_url, dict) else image_url
+    return {"type": "image_url", "image_url": {"url": image_data_url(payload)}}
+
+
+def image_data_url(value: Any) -> str:
+    """Encode a supported in-memory image value as an OpenAI data URL."""
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Image.Image):
+        buffer = BytesIO()
+        value.convert("RGB").save(buffer, format="PNG")
+        value = buffer.getvalue()
+    elif isinstance(value, dict) and "bytes" in value:
+        value = value["bytes"]
+    if isinstance(value, bytes | bytearray):
+        encoded = base64.b64encode(bytes(value)).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+    raise TypeError(f"unsupported image payload: {type(value).__name__}")
+
+
+def assistant_text(content: Any) -> str:
+    """Flatten an OpenAI assistant content value to final-answer text."""
+
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        str(part.get("text", "")).strip() for part in content if isinstance(part, dict) and part.get("text")
+    ).strip()
