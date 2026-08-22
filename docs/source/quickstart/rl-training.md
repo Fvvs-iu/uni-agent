@@ -40,13 +40,22 @@ python3 -m uni_agent.tasks.swe_bench.preprocess --local-save-dir ~/data/uni_agen
 
 The command writes: `~/data/uni_agent/swe_bench_verified.parquet`
 
-The processed rows remain independent of the runtime Sandbox provider. Each row contains the rendered prompt, task metadata, canonical image reference, and per-sample Task Config.
+The processed rows remain independent of the runtime Sandbox provider and Agent protocol. Each row contains one dataset/source user message with the problem statement, task metadata, a canonical image reference, and a per-sample Task Config. The selected ReAct or Claude Code recipe owns the complete `prompt_template` and formats its Task messages from metadata at runtime.
+
+!!! warning "Prompt length filtering"
+    The standard verl dataset filters by the source prompt before the runtime Task template is expanded. A source message can therefore pass the configured prompt-length check even when its Agent-facing prompt is longer. Size prompt limits with the selected recipe template in mind.
 
 ## Configuration
 
 ### Task Configuration
 
 The Quickstart provides separate configs for the two Agent types:
+
+Both files define a complete metadata-based `prompt_template` for each task. ReAct owns its `submit` protocol in the ReAct recipe; the Claude Code recipe contains no generated submit instruction. Templates may use direct fields such as `{problem_statement}` and multilingual `{language}` wherever needed. Attribute or index access, conversions, format specifications, missing fields, non-text values, malformed templates, and structured message content are rejected; multimodal template rendering is deferred. Without a template, pre-rendered structured messages can pass through in `prompt`, subject to support in the selected Agent, API adapter, and model processor.
+
+Each YAML file is parsed into an index by Task `name`, but only the entry matching a dataset sample is merged, validated as a Task Config, and rendered. If a dataset has no `swe_bench_multilingual` rows, the multilingual entry is not applied or sent to an Agent. Invalid YAML, entries without `name`, and duplicate names still fail when the file is loaded.
+
+Framework `raw_prompt` remains the Agent-neutral dataset/source prompt. A configured RewardLoop or judge can obtain the problem statement from its user content when that scoring path is used, while the built-in SWE Task evaluates from `TaskConfig.metadata`. verl also uses the source prompt for loader-time token-length checks when overlong-prompt filtering is enabled and preserves it as TransferQueue metadata; trajectory token tensors come from the Agent's actual requests captured by the Gateway. A template-free self-rendering Agent can receive that source message and apply its own template inside the Sandbox; this is the intended path for the planned mini-swe-agent integration. The current Task Runner cannot observe such an Agent's final internal messages and does not replace downstream `raw_prompt` with an approximation.
 
 === "ReAct"
 
