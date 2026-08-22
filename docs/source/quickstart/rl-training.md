@@ -55,6 +55,11 @@ The Quickstart provides separate configs for the two Agent types:
       sandbox:
         provider: vefaas  # <-- Change to your Sandbox provider.
         runtime_timeout: 7200
+        image_map:
+          - from: "swebench/**:latest"
+            to: "enterprise-public-cn-beijing.cr.volces.com/swe-bench-verified/**:v2"
+          - from: "swerebench/**:latest"
+            to: "enterprise-public-cn-beijing.cr.volces.com/swe-rebench/**:latest"
       agent:
         name: react
         max_steps: 200
@@ -78,6 +83,11 @@ The Quickstart provides separate configs for the two Agent types:
       sandbox:
         provider: vefaas  # <-- Change to your Sandbox provider.
         runtime_timeout: 7200
+        image_map:
+          - from: "swebench/**:latest"
+            to: "enterprise-public-cn-beijing.cr.volces.com/swe-bench-verified/**:v2"
+          - from: "swerebench/**:latest"
+            to: "enterprise-public-cn-beijing.cr.volces.com/swe-rebench/**:latest"
       agent:
         name: react
         max_steps: 200
@@ -105,6 +115,11 @@ The Quickstart provides separate configs for the two Agent types:
       sandbox:
         provider: vefaas  # <-- Change to your Sandbox provider.
         runtime_timeout: 7200
+        image_map:
+          - from: "swebench/**:latest"
+            to: "enterprise-public-cn-beijing.cr.volces.com/swe-bench-verified/**:v2"
+          - from: "swerebench/**:latest"
+            to: "enterprise-public-cn-beijing.cr.volces.com/swe-rebench/**:latest"
       agent:
         name: claude_code
         max_turns: 100
@@ -118,6 +133,11 @@ The Quickstart provides separate configs for the two Agent types:
       sandbox:
         provider: vefaas  # <-- Change to your Sandbox provider.
         runtime_timeout: 7200
+        image_map:
+          - from: "swebench/**:latest"
+            to: "enterprise-public-cn-beijing.cr.volces.com/swe-bench-verified/**:v2"
+          - from: "swerebench/**:latest"
+            to: "enterprise-public-cn-beijing.cr.volces.com/swe-rebench/**:latest"
       agent:
         name: claude_code
         max_turns: 100
@@ -130,6 +150,8 @@ The Quickstart provides separate configs for the two Agent types:
 
     !!! warning "Network connectivity"
         The Claude Code sandbox must be able to reach the GPU machine hosting its session-scoped Gateway endpoint.
+
+Each Task Config lists both `swebench` and `swerebench` `image_map` rules so train (reBench) and val (Verified) samples share one file. `**` copies the instance-specific path; `:latest` on `from` also matches untagged parquet images. See [`image_map`](../concepts/sandbox.md#image_map).
 
 ### Ray Runtime Environment
 
