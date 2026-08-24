@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 from PIL import Image
 
 import uni_agent.agents.deepeyes.agent as agent_module
@@ -39,7 +38,8 @@ class _FakeModel:
         ]
         self.instances.append(self)
 
-    async def query(self, messages):
+    async def query(self, messages, *, sampling_params=None):
+        self.last_sampling_params = sampling_params
         return self.responses.pop(0)
 
     async def aclose(self) -> None:
@@ -113,3 +113,36 @@ def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
     assert any(part.get("type") == "image_url" for part in tool_content)
     assert _FakeModel.instances[0].kwargs["sampling_params"]["tool_choice"] == "auto"
     assert _FakeModel.instances[0].closed is True
+
+
+def test_deepeyes_agent_enforces_per_turn_and_total_token_budgets(monkeypatch):
+    _FakeModel.instances.clear()
+    monkeypatch.setattr(agent_module, "OpenAICompatibleChatModel", _FakeModel)
+    agent = DeepEyesAgent(
+        DeepEyesAgentConfig(
+            model=ModelConfig(
+                base_url="http://gateway/v1",
+                max_tokens_per_turn=8,
+                max_total_tokens=10,
+            ),
+            request_max_retries=0,
+        )
+    )
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": Image.new("RGB", (100, 80), "white")},
+                {"type": "text", "text": "What is shown?"},
+            ],
+        }
+    ]
+
+    result = asyncio.run(agent.run(sandbox=object(), messages=messages))
+
+    model = _FakeModel.instances[0]
+    assert model.kwargs["sampling_params"]["max_tokens"] == 8
+    assert model.kwargs["max_retries"] == 0
+    # The first fake completion consumes five tokens, leaving five for turn two.
+    assert model.last_sampling_params["max_tokens"] == 5
+    assert result.info["completion_tokens"] == 9

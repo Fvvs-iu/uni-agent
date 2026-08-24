@@ -34,6 +34,11 @@ class DeepEyesAgentConfig(AgentConfig):
     name: str = "deepeyes"
     max_turns: int = Field(default=4, gt=0)
     request_timeout_seconds: float = Field(default=300.0, gt=0.0)
+    request_max_retries: int = Field(
+        default=2,
+        ge=0,
+        description="Retries after transient HTTP failures. Set to zero for long-running policy requests.",
+    )
     action_timeout_seconds: float | None = Field(default=None, gt=0.0)
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     image_tool: ImageZoomInConfig = Field(default_factory=ImageZoomInConfig)
@@ -73,6 +78,8 @@ class DeepEyesAgent(Agent):
         toolbox = Toolbox([tool])
         request_params = cfg.model.sampling_params()
         request_params["tool_choice"] = "auto"
+        if cfg.model.max_tokens_per_turn is not None:
+            request_params["max_tokens"] = cfg.model.max_tokens_per_turn
         model = OpenAICompatibleChatModel(
             base_url=cfg.model.base_url,
             api_key=cfg.model.api_key,
@@ -80,6 +87,7 @@ class DeepEyesAgent(Agent):
             sampling_params=request_params,
             tools_schemas=toolbox.schemas(),
             timeout=cfg.request_timeout_seconds,
+            max_retries=cfg.request_max_retries,
         )
 
         info: dict[str, Any] = {
@@ -98,7 +106,25 @@ class DeepEyesAgent(Agent):
                 for turn_index in range(cfg.max_turns):
                     info["steps"] = turn_index + 1
                     logger.info("DeepEyes agent turn %s/%s", turn_index + 1, cfg.max_turns)
-                    content, tool_calls, generation = await model.query(transcript)
+                    turn_params = dict(request_params)
+                    if cfg.model.max_total_tokens is not None:
+                        remaining_tokens = cfg.model.max_total_tokens - info["completion_tokens"]
+                        if remaining_tokens <= 0:
+                            termination_reason = "token_limit"
+                            logger.warning(
+                                "DeepEyes exhausted max_total_tokens=%s before turn %s",
+                                cfg.model.max_total_tokens,
+                                turn_index + 1,
+                            )
+                            break
+                        turn_params["max_tokens"] = min(
+                            int(turn_params.get("max_tokens", remaining_tokens)),
+                            remaining_tokens,
+                        )
+                    content, tool_calls, generation = await model.query(
+                        transcript,
+                        sampling_params=turn_params,
+                    )
                     info["prompt_tokens"] += int(generation.get("prompt_tokens", 0))
                     info["completion_tokens"] += int(generation.get("completion_tokens", 0))
                     info["total_tokens"] = info["prompt_tokens"] + info["completion_tokens"]
