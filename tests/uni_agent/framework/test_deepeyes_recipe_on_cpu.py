@@ -33,7 +33,8 @@ def test_dataset_emits_serializable_task_config():
 
     row = dataset[0]
 
-    image_part = row["raw_prompt"][1]["content"][0]
+    assert [message["role"] for message in row["raw_prompt"]] == ["user"]
+    image_part = row["raw_prompt"][0]["content"][0]
     assert image_part["type"] == "image_url"
     assert image_part["image_url"]["url"].startswith("data:image/png;base64,")
     task_config = row["tools_kwargs"]["task"]
@@ -42,6 +43,7 @@ def test_dataset_emits_serializable_task_config():
     assert task_config["ground_truth"] == "cat"
     assert task_config["data_source"] == "deepeyes/test"
     assert task_config["metadata"] == {"index": 7}
+    assert "prompt" not in task_config
     assert "images" not in row
     assert "agent_name" not in row
 
@@ -66,7 +68,7 @@ def test_dataset_structured_image_placeholder_consumes_images_column():
 
     row = dataset[0]
 
-    assert row["raw_prompt"][1]["content"][0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert row["raw_prompt"][0]["content"][0]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 def test_recipe_config_resolves_core_deepeyes_task_and_agent():

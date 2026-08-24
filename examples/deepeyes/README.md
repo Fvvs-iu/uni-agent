@@ -18,10 +18,11 @@ DeepEyesDataset
   -> verl TransferQueue
 ```
 
-The dataset converts each image to a standard OpenAI data URL before the
-sample crosses the TransferQueue boundary. The Task owns sample metadata and
-reward calculation, the Agent owns the model/tool interaction loop, and the
-Tool owns crop validation and execution.
+The dataset emits an Agent-neutral user message and converts each image to a
+standard OpenAI data URL before the sample crosses the TransferQueue boundary.
+The recipe owns the system prompt and Agent/Tool settings, the Task owns sample
+metadata and reward calculation, the Agent owns the model/tool interaction
+loop, and the Tool owns crop validation and execution.
 
 ## Requirements
 
