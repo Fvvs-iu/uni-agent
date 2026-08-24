@@ -78,6 +78,7 @@ def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
         DeepEyesAgentConfig(
             model=ModelConfig(base_url="http://gateway/v1", model_name="policy"),
             max_turns=4,
+            system_prompt="Recipe-owned instructions.",
         )
     )
     messages = [
@@ -107,6 +108,7 @@ def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
         "tool",
         "assistant",
     ]
+    assert result.transcript[0]["content"] == "Recipe-owned instructions."
     tool_content = result.transcript[3]["content"]
     assert any(part.get("type") == "image_url" for part in tool_content)
     assert _FakeModel.instances[0].kwargs["sampling_params"]["tool_choice"] == "auto"

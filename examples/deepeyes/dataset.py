@@ -13,7 +13,7 @@ from typing import Any
 import torch
 from PIL import Image
 
-from uni_agent.agents.deepeyes import DEFAULT_SYSTEM_PROMPT, messages_for_gateway
+from uni_agent.agents.deepeyes import messages_for_gateway
 from verl.utils.dataset.rl_dataset import RLHFDataset
 
 
@@ -34,12 +34,7 @@ class DeepEyesDataset(RLHFDataset):
         if source_image is None:
             raise ValueError("DeepEyes samples require an image")
 
-        raw_prompt = messages_for_gateway(
-            [
-                {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
-                {"role": "user", "content": user_messages[0]["content"]},
-            ]
-        )
+        raw_prompt = messages_for_gateway([{"role": "user", "content": user_messages[0]["content"]}])
 
         extra_info = row.get("extra_info") or {}
         if not isinstance(extra_info, dict):
@@ -64,7 +59,6 @@ class DeepEyesDataset(RLHFDataset):
         sample_index = extra_info.get("index", item)
         task_config = {
             "name": "deepeyes",
-            "prompt": copy.deepcopy(raw_prompt),
             "question": extra_info["question"],
             "ground_truth": str(reward_model["ground_truth"]),
             "data_source": data_source,
