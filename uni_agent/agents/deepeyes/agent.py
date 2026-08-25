@@ -55,6 +55,7 @@ class DeepEyesAgent(Agent):
         *,
         sandbox: Sandbox,
         messages: list[dict[str, Any]],
+        workdir: str | None = None,
     ) -> AgentResult:
         cfg: DeepEyesAgentConfig = self.config  # type: ignore[assignment]
         if cfg.model.base_url is None:
