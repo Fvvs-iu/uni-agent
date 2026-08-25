@@ -1,28 +1,24 @@
-# DeepEyes
+# DeepEyes Recipe
 
-This example trains a multimodal policy to answer visual questions with an
-image-cropping tool. The reusable DeepEyes `Task`, `Agent`, and `Tool` live in
-`uni_agent`; this directory contains only the verl training recipe.
+This recipe trains a Qwen multimodal policy with GRPO to answer visual
+questions. The policy can call `ImageZoomInTool` to crop an image before
+returning its final answer, and an OpenAI-compatible Judge provides the
+semantic accuracy reward.
 
-## Architecture
+## Result
 
-```text
-DeepEyesDataset
-  -> TaskConfig serialized in tools_kwargs
-  -> uni_agent.framework.task_runner.run_task
-  -> DeepEyesTask
-  -> DeepEyesAgent
-  -> ImageZoomInTool
-  -> LLM-as-a-Judge reward
-  -> Gateway reward_info
-  -> verl TransferQueue
-```
+The Qwen3.5-4B experiment uses the fixed validation split generated
+by the preprocessing command below. Accuracy is the Judge's binary semantic
+correctness score.
 
-The dataset emits an Agent-neutral user message and converts each image to a
-standard OpenAI data URL before the sample crosses the TransferQueue boundary.
-The recipe owns the system prompt and Agent/Tool settings, the Task owns sample
-metadata and reward calculation, the Agent owns the model/tool interaction
-loop, and the Tool owns crop validation and execution.
+| Model | Deepeyes Validation accuracy (%) |
+| --- | ---: |
+| Qwen3.5-4B before training | 50.0 |
+| Qwen3.5-4B after DeepEyes training | 79.2 |
+| Absolute improvement | +29.2 |
+
+These numbers are results on the local 48-sample split, not a score on the
+full DeepEyes benchmark.
 
 ## Requirements
 
@@ -30,29 +26,27 @@ loop, and the Tool owns crop validation and execution.
   `qwen-vl-utils`, Pillow, and the OpenAI Python client.
 - A Qwen multimodal policy checkpoint.
 - DeepEyes train and validation parquet files.
-- A separate OpenAI-compatible Judge service. The Judge should be capable of
-  deciding whether a predicted answer is semantically equivalent to the
-  reference answer.
+- An OpenAI-compatible Judge that can decide whether a prediction is
+  semantically equivalent to the reference answer.
 
-The parquet rows must provide a chat prompt and an image. The recipe accepts
-either `<image>` placeholders paired with an `images` column or structured
-image content parts. It reads the reference answer from
-`reward_model.ground_truth` and the question from `extra_info.question` or the
-first user message.
+Run commands from the repository root. The 4B preset expects eight visible
+NPUs by default: devices 0-6 for policy training and rollout, and device 7 for
+the Judge.
 
-## Prepare data
+## 1. Prepare the data
 
-Download the official visual-toolbox Parquet and create a training/validation
-split:
+Download the official
+[`ChenShawn/DeepEyes-Datasets-47k`](https://huggingface.co/datasets/ChenShawn/DeepEyes-Datasets-47k)
+visual-toolbox parquet and create the train/validation split:
 
 ```bash
 python -m uni_agent.tasks.deepeyes.preprocess \
   --local-save-dir /path/to/deepeyes-data
 ```
 
-This writes `train.parquet`, `val.parquet`, and `manifest.json`. The manifest
-records the selected source row positions and dataset indices. To prepare an
-already downloaded source file without network access, use:
+This writes `train.parquet`, `val.parquet`, and `manifest.json`. The default
+validation size is 48. To use an existing source parquet without downloading
+it again:
 
 ```bash
 python -m uni_agent.tasks.deepeyes.preprocess \
@@ -60,77 +54,65 @@ python -m uni_agent.tasks.deepeyes.preprocess \
   --source-file /path/to/data_0.1.2_visual_toolbox_v2.parquet
 ```
 
-## Train
+The manifest records the selected source rows and dataset indices so the split
+can be audited.
 
-Run commands from the repository root after preparing the accelerator runtime
-and Ray environment:
+## 2. Train Qwen3.5-4B
 
-```bash
-export MODEL_PATH=/path/to/qwen-multimodal-policy
-export TRAIN_FILE=/path/to/train.parquet
-export VAL_FILE=/path/to/validation.parquet
-export LLM_AS_A_JUDGE_BASE=http://judge-host:port/v1
-export LLM_AS_A_JUDGE_MODEL=judge-model-name
-
-bash examples/deepeyes/train_deepeyes.sh
-```
-
-The script first sends a small semantic request to the Judge and then runs the
-verl trainer in the foreground. Set `CHECK_JUDGE=0` only when that preflight is
-intentionally handled elsewhere. Use `DRY_RUN=1` to print the fully resolved
-training command. Additional Hydra overrides can be appended to the command
-line.
-
-The defaults form a one-device smoke configuration. A larger run can override
-the topology and batching without editing the script, for example:
+`run_4b_7p1_container.sh` is the reproducible eight-NPU preset used for the
+result above. Set the model and data paths if they differ from the defaults in
+the script, then launch it inside the prepared training environment:
 
 ```bash
-NDEVICES_PER_NODE=8 \
-GATEWAY_COUNT=8 \
-TRAIN_BATCH_SIZE=8 \
-PPO_MINI_BATCH_SIZE=8 \
-ROLLOUT_N=4 \
-TOTAL_TRAINING_STEPS=50 \
-TEST_FREQ=25 \
-bash examples/deepeyes/train_deepeyes.sh
+POLICY_MODEL=/path/to/Qwen3.5-4B \
+JUDGE_MODEL=/path/to/Qwen3.5-4B \
+TRAIN_FILE=/path/to/deepeyes-data/train.parquet \
+VAL_FILE=/path/to/deepeyes-data/val.parquet \
+bash examples/deepeyes/run_4b_7p1_container.sh
 ```
 
-The rollout defaults (`max_num_seqs=1`, eager execution, chunked prefill and
-prefix caching disabled) are conservative settings used for Qwen3.5 on
-vLLM-Ascend. They can be overridden after the target backend has been
-validated.
+The launcher starts the Judge on device 7, runs training on devices 0-6, and
+stops the Judge when training exits. The resolved configuration, training log,
+trajectories, and checkpoints are written under the selected run directory.
+
+Use `DEEPEYES_DRY_RUN=1` to resolve and print the command without starting the
+Judge or trainer:
+
+```bash
+DEEPEYES_DRY_RUN=1 bash examples/deepeyes/run_4b_7p1_container.sh
+```
+
+For other device layouts, use `train_deepeyes.sh` directly and provide the
+Judge endpoint:
+
+```bash
+MODEL_PATH=/path/to/qwen-multimodal-policy \
+TRAIN_FILE=/path/to/train.parquet \
+VAL_FILE=/path/to/val.parquet \
+LLM_AS_A_JUDGE_BASE=http://judge-host:port/v1 \
+LLM_AS_A_JUDGE_MODEL=judge-model-name \
+bash examples/deepeyes/train_deepeyes.sh
+```
 
 ## Reward
 
-The reward follows the DeepEyes recipe:
+The reward is:
 
 ```text
 reward = 0.8 * accuracy + 0.2 * format + 1.2 * tool
 ```
 
-- `accuracy` is the binary Judge result.
-- `format` is `0` for valid output and `-1` for invalid output.
-- `tool` is `1` only when at least one crop call succeeds and the final answer
-  is correct. A serialized or failed tool call receives no tool bonus.
-
-The formula weights are fixed in `reward.py`. The answer-length limit, Judge
-timeout/retry behavior, strict mode, and generation parameters are declared
-under `reward` in `task_config.yaml`. Judge `base_url`, `model_name`, and
-`api_key` can also be declared there; when omitted, they are resolved from
-`LLM_AS_A_JUDGE_BASE`, `LLM_AS_A_JUDGE_MODEL`, and
-`LLM_AS_A_JUDGE_API_KEY`.
-
-The generic task runner reports reward, accuracy, and completion status to the
-training framework. The Task also retains format, tool-use, and token metrics
-in `TaskResult.extra_info` and the runtime logs.
+`accuracy` is the binary Judge result. `format` is `0` for valid output and
+`-1` for invalid output. `tool` is `1` only when at least one crop succeeds and
+the final answer is correct; failed or malformed calls receive no tool bonus.
+Judge settings and generation limits are defined in the task config.
 
 ## Implementation map
 
-- `dataset.py`: parquet adapter and per-sample TaskConfig construction.
-- `task_config.yaml`: run-wide Task and Agent defaults.
-- `train_deepeyes.sh`: foreground verl v1 GRPO entry point.
-- `uni_agent/agents/deepeyes/agent.py`: multimodal policy loop and message conversion.
-- `uni_agent/agents/deepeyes/tool.py`: image decoding, crop validation, and crop tool.
-- `uni_agent/tasks/deepeyes/task.py`: sample lifecycle and reward invocation.
-- `uni_agent/tasks/deepeyes/reward.py`: configurable Judge and reward composition.
-- `uni_agent/tasks/deepeyes/preprocess.py`: official dataset download and train/validation split.
+- `dataset.py`: parquet adapter and per-sample task configuration.
+- `task_config.yaml`: default task, Judge, agent, and crop-tool settings.
+- `task_config_4b.yaml`: settings used by the reported 4B experiment.
+- `train_deepeyes.sh`: verl v1 colocate-async GRPO entry point.
+- `run_4b_7p1_container.sh`: eight-NPU 4B experiment preset.
+- `uni_agent/agents/deepeyes/`: multimodal policy loop and crop tool.
+- `uni_agent/tasks/deepeyes/`: preprocessing, task lifecycle, and reward.

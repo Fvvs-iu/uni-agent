@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
-cd "${REPO_ROOT}"
+cd "${TRAIN_WORKDIR:-${REPO_ROOT}}"
 
 : "${MODEL_PATH:?Set MODEL_PATH to a Qwen multimodal policy checkpoint}"
 : "${TRAIN_FILE:?Set TRAIN_FILE to the DeepEyes training parquet}"
@@ -40,6 +40,15 @@ ENFORCE_EAGER="${ENFORCE_EAGER:-false}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.45}"
 NUM_WARMUP_BATCHES="${NUM_WARMUP_BATCHES:-1}"
 MAX_OFF_POLICY_THRESHOLD="${MAX_OFF_POLICY_THRESHOLD:-8}"
+ACTOR_LR="${ACTOR_LR:-1e-6}"
+ACTOR_USE_KL_LOSS="${ACTOR_USE_KL_LOSS:-false}"
+ACTOR_KL_LOSS_COEF="${ACTOR_KL_LOSS_COEF:-0.0}"
+ACTOR_KL_LOSS_TYPE="${ACTOR_KL_LOSS_TYPE:-low_var_kl}"
+ACTOR_ENTROPY_COEFF="${ACTOR_ENTROPY_COEFF:-0.0}"
+REF_LOG_PROB_MICRO_BATCH_SIZE_PER_GPU="${REF_LOG_PROB_MICRO_BATCH_SIZE_PER_GPU:-1}"
+REF_LOG_PROB_USE_DYNAMIC_BSZ="${REF_LOG_PROB_USE_DYNAMIC_BSZ:-false}"
+MASK_UNFINISHED_EPISODE="${MASK_UNFINISHED_EPISODE:-false}"
+DATA_SHUFFLE="${DATA_SHUFFLE:-false}"
 
 # Validation, checkpoints, and logs.
 TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-10}"
@@ -82,6 +91,7 @@ TRAIN_ARGS=(
     data.max_response_length="${MAX_RESPONSE_LENGTH}"
     data.train_batch_size="${TRAIN_BATCH_SIZE}"
     data.val_batch_size="${VAL_BATCH_SIZE}"
+    data.shuffle="${DATA_SHUFFLE}"
     data.dataloader_num_workers=0
     data.custom_cls.path=pkg://examples.deepeyes.dataset
     data.custom_cls.name=DeepEyesDataset
@@ -100,14 +110,17 @@ TRAIN_ARGS=(
     actor_rollout_ref.actor.ppo_mini_batch_size="${PPO_MINI_BATCH_SIZE}"
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1
     actor_rollout_ref.actor.fsdp_config.fsdp_size="${NDEVICES_PER_NODE}"
-    actor_rollout_ref.actor.optim.lr=1e-6
+    actor_rollout_ref.actor.optim.lr="${ACTOR_LR}"
     actor_rollout_ref.actor.optim.weight_decay=0.1
-    actor_rollout_ref.actor.use_kl_loss=false
-    actor_rollout_ref.actor.kl_loss_coef=0.0
-    actor_rollout_ref.actor.entropy_coeff=0.0
+    actor_rollout_ref.actor.use_kl_loss="${ACTOR_USE_KL_LOSS}"
+    actor_rollout_ref.actor.kl_loss_coef="${ACTOR_KL_LOSS_COEF}"
+    actor_rollout_ref.actor.kl_loss_type="${ACTOR_KL_LOSS_TYPE}"
+    actor_rollout_ref.actor.entropy_coeff="${ACTOR_ENTROPY_COEFF}"
     actor_rollout_ref.actor.loss_agg_mode=token-mean
     actor_rollout_ref.ref.strategy=fsdp2
     actor_rollout_ref.ref.use_torch_compile=false
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu="${REF_LOG_PROB_MICRO_BATCH_SIZE_PER_GPU}"
+    actor_rollout_ref.ref.log_prob_use_dynamic_bsz="${REF_LOG_PROB_USE_DYNAMIC_BSZ}"
     actor_rollout_ref.rollout.name=vllm
     actor_rollout_ref.rollout.mode=async
     actor_rollout_ref.rollout.n="${ROLLOUT_N}"
@@ -140,7 +153,7 @@ TRAIN_ARGS=(
     ++actor_rollout_ref.rollout.agent.agent_loop_manager_class=uni_agent.framework.entry.AgentFrameworkRolloutAdapter
     ++actor_rollout_ref.rollout.custom.agent_framework.gateway_count="${GATEWAY_COUNT}"
     ++actor_rollout_ref.rollout.custom.agent_framework.log_dir="${AGENT_LOG_DIR}"
-    ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode=false
+    ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode="${MASK_UNFINISHED_EPISODE}"
     ++actor_rollout_ref.rollout.custom.agent_framework.use_reward_loop_worker=false
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_fqn=uni_agent.framework.task_runner.run_task
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.dispatch_mode=ray_task
