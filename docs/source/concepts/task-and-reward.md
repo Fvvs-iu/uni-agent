@@ -46,8 +46,6 @@ When a recipe supplies `prompt_template`, datasets should keep the source `promp
 ```yaml
 - name: swe_bench
   prompt_template:
-    - role: system
-      content: You are a software engineer working in an existing repository.
     - role: user
       content: |-
         Resolve this issue in /testbed:
@@ -72,7 +70,7 @@ Runtime templates are intentionally text-only:
 - Use standard Python formatting escapes, `{{` and `}}`, for literal braces.
 - Image, video, audio, and other structured message content are not supported by runtime templates. Multimodal template rendering is deferred.
 
-Without `prompt_template`, the dataset/source messages pass through unchanged. They may therefore already contain complete Agent instructions or structured multimodal content; end-to-end support for that content still depends on the selected Agent, API adapter, and model processor. Template-free pass-through is also the intended path for self-rendering Agents. For example, the planned mini-swe-agent integration will read the source user content as the problem statement and apply its own template inside the Sandbox. The Task still calls every Agent through the uniform `Agent.run(sandbox, messages)` interface and does not pass metadata or branch on Agent name.
+Without `prompt_template`, the dataset/source messages pass through unchanged. They may therefore already contain complete Agent instructions or structured multimodal content; end-to-end support for that content still depends on the selected Agent, API adapter, and model processor. Template-free pass-through is also the intended path for self-rendering Agents. For example, the planned mini-swe-agent integration will read the source user content as the problem statement and apply its own template inside the Sandbox. The Task still calls every Agent through the uniform `Agent.run(sandbox, messages, workdir=None)` interface and does not pass metadata or branch on Agent name.
 
 After Task rendering, `TaskConfig.prompt` is the message list passed to `Agent.run()`. `prompt_template` is an input-only rendering directive and is omitted when Task configs are serialized. In Framework-managed execution, verl uses the source prompt for loader-time token-length checks when overlong-prompt filtering is enabled, makes it available as `raw_prompt` when a configured RewardLoop or judge scoring path is used, and preserves it as metadata in records written to TransferQueue. Task-rendered messages do not replace that source value. The trajectory token tensors are instead built from the Agent's actual model requests captured by the Gateway. Built-in SWE Tasks evaluate from `TaskConfig.metadata`, independently of `raw_prompt`.
 
@@ -99,6 +97,7 @@ class MyTask(Task):
             agent_result = await agent.run(
                 sandbox=sandbox,
                 messages=config.prompt,
+                workdir=None,
             )
 
             score = await compute_reward(

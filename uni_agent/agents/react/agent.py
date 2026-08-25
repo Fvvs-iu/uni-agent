@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
@@ -58,6 +59,7 @@ class ReActAgent(Agent):
         *,
         sandbox: Sandbox,
         messages: list[dict[str, Any]],
+        workdir: str | None = None,
     ) -> AgentResult:
         cfg: ReActConfig = self.config  # type: ignore[assignment]
         if cfg.model.base_url is None:
@@ -85,6 +87,8 @@ class ReActAgent(Agent):
         termination_reason = "unknown"
         try:
             async with toolbox.entered(retry=3, timeout=60):
+                if workdir is not None and "shell" in toolbox.names():
+                    await toolbox.call("shell", {"command": f"cd -- {shlex.quote(workdir)}"})
                 for step_idx in range(1, cfg.max_steps + 1):
                     trajectory_info["steps"] = step_idx
                     stop_reason = await self.step(cfg, model, toolbox, transcript, trajectory_info)

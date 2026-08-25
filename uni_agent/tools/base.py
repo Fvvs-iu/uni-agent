@@ -243,7 +243,12 @@ class Toolbox:
             self._tools[tool.name] = tool
 
     @classmethod
-    def from_specs(cls, specs: list[dict[str, Any]], *, sandbox: SandboxBackend) -> Toolbox:
+    def from_specs(
+        cls,
+        specs: list[dict[str, Any]],
+        *,
+        sandbox: SandboxBackend,
+    ) -> Toolbox:
         """Build a toolbox from ``{name, ...kwargs}`` config entries bound to ``sandbox``.
 
         Each entry has a ``name`` (a TOOL_REGISTRY key) plus that tool's kwargs, e.g.

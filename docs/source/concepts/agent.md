@@ -36,11 +36,12 @@ async def run(
     *,
     sandbox: Sandbox,
     messages: list[dict],
+    workdir: str | None = None,
 ) -> AgentResult:
     ...
 ```
 
-The Task has already started the Sandbox. The Agent must not stop it.
+The Task has already started the Sandbox. The Agent must not stop it. `workdir` optionally selects the Agent's working directory inside the Sandbox.
 
 `AgentResult` can carry:
 
@@ -133,11 +134,13 @@ class MyAgent(Agent):
         *,
         sandbox,
         messages: list[dict[str, Any]],
+        workdir: str | None = None,
     ) -> AgentResult:
         config: MyAgentConfig = self.config
         result = await sandbox.exec(
             ["my-agent", "--endpoint", config.model.base_url],
             timeout=config.run_timeout,
+            workdir=workdir,
         )
         return AgentResult(
             info={

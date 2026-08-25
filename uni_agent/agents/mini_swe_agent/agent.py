@@ -112,6 +112,7 @@ class MiniSweAgentAgent(Agent):
         *,
         sandbox: Sandbox,
         messages: list[dict[str, Any]],
+        workdir: str | None = None,
     ) -> AgentResult:
         cfg: MiniSweAgentConfig = self.config  # type: ignore[assignment]
         if cfg.model.base_url is None:
@@ -136,7 +137,7 @@ class MiniSweAgentAgent(Agent):
             tool_python=cfg.tool_python,
             run_agent_script=cfg.run_agent_script,
         )
-        result = await sandbox.exec_shell(agent_cmd, timeout=cfg.run_timeout)
+        result = await sandbox.exec_shell(agent_cmd, timeout=cfg.run_timeout, workdir=workdir)
 
         # 3) Parse the result JSON from stdout (litellm noise tolerated).
         agent_info = parse_agent_result(result.stdout or "")
