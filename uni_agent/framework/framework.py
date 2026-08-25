@@ -803,6 +803,14 @@ class OpenAICompatibleAgentFramework(AgentFramework):
                     session_trajectories,
                     runner_config.trajectory_selection,
                 )
+            except asyncio.CancelledError:
+                # Parent shutdown/cancellation must not leave the Gateway route
+                # and actor-owned session live after the runner task is gone.
+                try:
+                    await asyncio.shield(self.gateway_manager.abort_session(session_id))
+                except Exception:
+                    logger.exception("session %s: Gateway abort failed during parent cancellation", session_id)
+                raise
             except Exception:
                 logger.exception("session %s failed (runner=%s); aborting session", session_id, runner_name)
                 await self.gateway_manager.abort_session(session_id)
