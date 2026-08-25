@@ -11,7 +11,7 @@ from PIL import Image
 from pydantic import Field
 
 from uni_agent.agents.react.model import OpenAICompatibleChatModel
-from uni_agent.tools import ToolResult, Toolbox
+from uni_agent.tools import Toolbox, ToolResult
 
 from ..base import Agent, AgentConfig, AgentResult
 from ..registry import register_agent
@@ -223,10 +223,7 @@ def _tool_message(tool_call_id: str, result: ToolResult) -> dict[str, Any]:
     if result.text is not None:
         content.append({"type": "text", "text": str(result.text)})
     if isinstance(result, ImageZoomInResult):
-        content.extend(
-            {"type": "image_url", "image_url": {"url": image_data_url(image)}}
-            for image in result.images
-        )
+        content.extend({"type": "image_url", "image_url": {"url": image_data_url(image)}} for image in result.images)
     if not content:
         content.append({"type": "text", "text": ""})
     return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
