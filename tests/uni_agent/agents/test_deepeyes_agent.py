@@ -91,7 +91,7 @@ def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
         }
     ]
 
-    result = asyncio.run(agent.run(sandbox=object(), messages=messages))
+    result = asyncio.run(agent.run(sandbox=object(), messages=messages, workdir="/testbed"))
 
     assert result.finished is True
     assert result.output == {"final_answer": "<answer>cat</answer>", "termination_reason": "finished"}

@@ -36,7 +36,11 @@ class DeepEyesTask(Task):
         logger.info("DeepEyes task start: question=%s", cfg.question.strip())
 
         async with self.build_sandbox() as sandbox:
-            agent_result = await self.build_agent().run(sandbox=sandbox, messages=cfg.prompt)
+            agent_result = await self.build_agent().run(
+                sandbox=sandbox,
+                messages=cfg.prompt,
+                workdir=None,
+            )
 
         final_answer_value = agent_result.output.get("final_answer")
         final_answer = final_answer_value if isinstance(final_answer_value, str) else None
