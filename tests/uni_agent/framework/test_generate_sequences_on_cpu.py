@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -14,6 +15,34 @@ from verl.utils import tensordict_utils as tu
 
 _RUNNER_CALLS = []
 _TEST_INLINE_RUNNERS = {}
+_POSTPROCESSOR_CALLS = []
+_NOT_CALLABLE_POSTPROCESSOR = 42
+
+
+def _recording_trajectory_postprocessor(trajectories, *, policy=None):
+    _POSTPROCESSOR_CALLS.append((trajectories, policy))
+    return list(reversed(trajectories))
+
+
+async def _async_trajectory_postprocessor(trajectories):
+    await asyncio.sleep(0)
+    return list(trajectories[-1:])
+
+
+def _empty_trajectory_postprocessor(_trajectories):
+    return []
+
+
+def _tuple_trajectory_postprocessor(trajectories):
+    return tuple(trajectories)
+
+
+def _invalid_item_trajectory_postprocessor(trajectories):
+    return ["not-a-trajectory"]
+
+
+def _dropping_reward_info_postprocessor(trajectories):
+    return [replace(trajectories[-1], reward_info={})]
 
 
 async def _config_recording_runner(*, raw_prompt, session, sample_index, marker=None, **kwargs):
@@ -84,6 +113,8 @@ async def _build_framework_with_agent_runners(
     val_n: int = 1,
     log_dir: str | None = None,
     mask_unfinished_episode: bool = False,
+    trajectory_postprocessor_fqn: str | None = None,
+    trajectory_postprocessor_kwargs: object | None = None,
 ):
     from omegaconf import OmegaConf
 
@@ -93,6 +124,10 @@ async def _build_framework_with_agent_runners(
     }
     if log_dir is not None:
         agent_framework_cfg["log_dir"] = log_dir
+    if trajectory_postprocessor_fqn is not None:
+        agent_framework_cfg["trajectory_postprocessor_fqn"] = trajectory_postprocessor_fqn
+    if trajectory_postprocessor_kwargs is not None:
+        agent_framework_cfg["trajectory_postprocessor_kwargs"] = trajectory_postprocessor_kwargs
 
     config = OmegaConf.create(
         {
@@ -877,6 +912,137 @@ async def test_framework_rejects_unknown_trajectory_selection(fake_tq):
 
 
 @pytest.mark.asyncio
+async def test_trajectory_postprocessor_applies_kwargs_before_scoring_and_tq(monkeypatch, fake_tq):
+    _POSTPROCESSOR_CALLS.clear()
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [
+                _trajectory(response_ids=[20]),
+                _trajectory(response_ids=[30]),
+            ]
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        trajectory_postprocessor_fqn=f"{__name__}._recording_trajectory_postprocessor",
+        trajectory_postprocessor_kwargs={"policy": {"thresholds": [1, 2]}},
+    )
+
+    scored_responses = []
+
+    def score_processed_trajectories(trajectories):
+        scored_responses.extend(trajectory.response_ids for trajectory in trajectories)
+        return [(0.5, {}) for _ in trajectories]
+
+    monkeypatch.setattr(framework, "_score_from_reward_info", score_processed_trajectories)
+
+    await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
+
+    assert len(_POSTPROCESSOR_CALLS) == 1
+    processed_input, policy = _POSTPROCESSOR_CALLS[0]
+    assert isinstance(processed_input, tuple)
+    assert policy == {"thresholds": [1, 2]}
+    assert scored_responses == [[30], [20]]
+
+    fields = fake_tq.batch_puts[0]["fields"]
+    assert [response.tolist() for response in fields["responses"]] == [[30], [20]]
+    assert [score.tolist() for score in fields["rm_scores"]] == [[0.5], [0.5]]
+
+
+@pytest.mark.asyncio
+async def test_async_trajectory_postprocessor_is_awaited(fake_tq):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [
+                _trajectory(response_ids=[20]),
+                _trajectory(response_ids=[30]),
+            ]
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        trajectory_postprocessor_fqn=f"{__name__}._async_trajectory_postprocessor",
+    )
+
+    await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
+
+    assert fake_tq.batch_puts[0]["keys"] == ["uid-0_0_0"]
+    assert fake_tq.batch_puts[0]["fields"]["responses"][0].tolist() == [30]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("postprocessor_name", "error_type", "error_message"),
+    [
+        ("_tuple_trajectory_postprocessor", TypeError, r"must return list\[Trajectory\], got tuple"),
+        ("_invalid_item_trajectory_postprocessor", TypeError, "returned a non-Trajectory item"),
+    ],
+)
+async def test_trajectory_postprocessor_reports_invalid_extensions(
+    postprocessor_name,
+    error_type,
+    error_message,
+):
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=_FakeGatewayManager({}),
+        trajectory_postprocessor_fqn=f"{__name__}.{postprocessor_name}",
+    )
+
+    with pytest.raises(error_type, match=error_message):
+        await framework._apply_trajectory_postprocessor([_trajectory()])
+
+
+@pytest.mark.asyncio
+async def test_trajectory_postprocessor_rejects_dropped_reward_info():
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=_FakeGatewayManager({}),
+        trajectory_postprocessor_fqn=f"{__name__}._dropping_reward_info_postprocessor",
+    )
+
+    with pytest.raises(ValueError, match="must preserve finalized reward_info"):
+        await framework._apply_trajectory_postprocessor([_trajectory(reward_info={"reward": 0.5, "finished": False})])
+
+
+@pytest.mark.asyncio
+async def test_framework_rejects_non_callable_trajectory_postprocessor():
+    with pytest.raises(TypeError, match="must resolve to a callable"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            trajectory_postprocessor_fqn=f"{__name__}._NOT_CALLABLE_POSTPROCESSOR",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("postprocessor_fqn", "postprocessor_kwargs", "error_type", "error_message"),
+    [
+        ("   ", None, ValueError, "trajectory_postprocessor_fqn must be a non-empty string"),
+        (123, None, ValueError, "trajectory_postprocessor_fqn must be a non-empty string"),
+        (None, {"enabled": True}, ValueError, "requires trajectory_postprocessor_fqn"),
+        (f"{__name__}._recording_trajectory_postprocessor", [1], TypeError, "must be a mapping"),
+    ],
+)
+async def test_framework_rejects_invalid_trajectory_postprocessor_config(
+    postprocessor_fqn,
+    postprocessor_kwargs,
+    error_type,
+    error_message,
+):
+    with pytest.raises(error_type, match=error_message):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            trajectory_postprocessor_fqn=postprocessor_fqn,
+            trajectory_postprocessor_kwargs=postprocessor_kwargs,
+        )
+
+
+@pytest.mark.asyncio
 async def test_generate_sequences_keeps_successful_sessions_when_one_session_fails(fake_tq):
     """A failed rollout session aborts only that session; other successful
     sessions for the same prompt are still finalized and written to TQ."""
@@ -908,18 +1074,18 @@ async def test_generate_sequences_keeps_successful_sessions_when_one_session_fai
 
 @pytest.mark.asyncio
 async def test_generate_sequences_marks_prompt_failure_when_all_sessions_fail(fake_tq):
-    """If every session for a validation prompt fails, the uid is marked
-    failed in TQ and ``generate_sequences`` raises the all-rollouts failure."""
+    """Filtering every session to empty marks the uid failed and raises."""
     runtime = _FakeGatewayManager(
         {
-            "session-sample-0-rollout-0": [],
-            "session-sample-0-rollout-1": [],
+            "session-sample-0-rollout-0": [_trajectory()],
+            "session-sample-0-rollout-1": [_trajectory()],
         }
     )
 
     framework = await _build_framework_with_agent_runners(
         agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
         gateway_manager=runtime,
+        trajectory_postprocessor_fqn=f"{__name__}._empty_trajectory_postprocessor",
         n=1,
         val_n=2,
     )
