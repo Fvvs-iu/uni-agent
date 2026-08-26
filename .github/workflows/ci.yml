@@ -28,6 +28,8 @@ jobs:
       # 1. git clone code
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # 2. set up python
       - name: Set up Python ${{ matrix.python-version }}
