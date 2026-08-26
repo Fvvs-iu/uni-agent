@@ -29,9 +29,9 @@ full DeepEyes benchmark.
 - An OpenAI-compatible Judge that can decide whether a prediction is
   semantically equivalent to the reference answer.
 
-Run commands from the repository root. The 4B preset expects eight visible
-NPUs by default: devices 0-6 for policy training and rollout, and device 7 for
-the Judge.
+Run commands from the repository root. The reported 4B result used a 7+1 
+NPU setup (seven devices for policy training and rollout, plus one for the
+Judge); that environment-specific launcher is not part of this repository.
 
 ## 1. Prepare the data
 
@@ -57,40 +57,72 @@ python -m uni_agent.tasks.deepeyes.preprocess \
 The manifest records the selected source rows and dataset indices so the split
 can be audited.
 
-## 2. Train Qwen3.5-4B
+## 2. Start the Judge
 
-`run_4b_7p1_container.sh` is the reproducible eight-NPU preset used for the
-result above. Set the model and data paths if they differ from the defaults in
-the script, then launch it inside the prepared training environment:
-
-```bash
-POLICY_MODEL=/path/to/Qwen3.5-4B \
-JUDGE_MODEL=/path/to/Qwen3.5-4B \
-TRAIN_FILE=/path/to/deepeyes-data/train.parquet \
-VAL_FILE=/path/to/deepeyes-data/val.parquet \
-bash examples/deepeyes/run_4b_7p1_container.sh
-```
-
-The launcher starts the Judge on device 7, runs training on devices 0-6, and
-stops the Judge when training exits. The resolved configuration, training log,
-trajectories, and checkpoints are written under the selected run directory.
-
-Use `DEEPEYES_DRY_RUN=1` to resolve and print the command without starting the
-Judge or trainer:
+DeepEyes uses an OpenAI-compatible Judge to score semantic answer correctness.
+For an Ascend NPU setup, start a Qwen3.5-4B Judge on a device reserved from
+policy training:
 
 ```bash
-DEEPEYES_DRY_RUN=1 bash examples/deepeyes/run_4b_7p1_container.sh
+JUDGE_MODEL=/path/to/Qwen3.5-4B
+JUDGE_MODEL_NAME=Qwen3.5-4B
+JUDGE_HOST=127.0.0.1
+JUDGE_PORT=18901
+
+ASCEND_RT_VISIBLE_DEVICES=7 \
+vllm serve "${JUDGE_MODEL}" \
+  --served-model-name "${JUDGE_MODEL_NAME}" \
+  --host "${JUDGE_HOST}" \
+  --port "${JUDGE_PORT}" \
+  --dtype bfloat16 \
+  --tensor-parallel-size 1 \
+  --max-model-len 4096 \
+  --max-num-seqs 16 \
+  --gpu-memory-utilization 0.75 \
+  --enforce-eager \
+  --trust-remote-code
 ```
 
-For other device layouts, use `train_deepeyes.sh` directly and provide the
-Judge endpoint:
+Keep the Judge process running in a separate terminal. Before training, verify
+that it is ready and exposes the configured model name:
+
+```bash
+curl --fail --silent http://127.0.0.1:18901/v1/models
+```
+
+For a remote Judge or a non-Ascend backend, start an equivalent
+OpenAI-compatible service and substitute its endpoint and served model name in
+the training command below.
+
+## 3. Train
+
+Use `train_deepeyes.sh` with the Judge endpoint:
 
 ```bash
 MODEL_PATH=/path/to/qwen-multimodal-policy \
 TRAIN_FILE=/path/to/train.parquet \
 VAL_FILE=/path/to/val.parquet \
-LLM_AS_A_JUDGE_BASE=http://judge-host:port/v1 \
-LLM_AS_A_JUDGE_MODEL=judge-model-name \
+LLM_AS_A_JUDGE_BASE=http://127.0.0.1:18901/v1 \
+LLM_AS_A_JUDGE_MODEL=Qwen3.5-4B \
+bash examples/deepeyes/train_deepeyes.sh
+```
+
+For a seven-device policy/rollout setup, configure the generic launcher with
+environment variables. The Judge command above reserves device 7, while the
+training command uses devices 0-6:
+
+```bash
+MODEL_PATH=/path/to/Qwen3.5-4B \
+TRAIN_FILE=/path/to/deepeyes-data/train.parquet \
+VAL_FILE=/path/to/deepeyes-data/val.parquet \
+LLM_AS_A_JUDGE_BASE=http://127.0.0.1:18901/v1 \
+LLM_AS_A_JUDGE_MODEL=Qwen3.5-4B \
+ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6 \
+NDEVICES_PER_NODE=7 \
+GATEWAY_COUNT=7 \
+TRAIN_BATCH_SIZE=7 \
+PPO_MINI_BATCH_SIZE=7 \
+ROLLOUT_N=4 \
 bash examples/deepeyes/train_deepeyes.sh
 ```
 
@@ -111,8 +143,6 @@ Judge settings and generation limits are defined in the task config.
 
 - `dataset.py`: parquet adapter and per-sample task configuration.
 - `task_config.yaml`: default task, Judge, agent, and crop-tool settings.
-- `task_config_4b.yaml`: settings used by the reported 4B experiment.
 - `train_deepeyes.sh`: verl v1 colocate-async GRPO entry point.
-- `run_4b_7p1_container.sh`: eight-NPU 4B experiment preset.
 - `uni_agent/agents/deepeyes/`: multimodal policy loop and crop tool.
 - `uni_agent/tasks/deepeyes/`: preprocessing, task lifecycle, and reward.

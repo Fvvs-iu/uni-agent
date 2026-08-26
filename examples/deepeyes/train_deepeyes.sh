@@ -68,7 +68,7 @@ export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/verl${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export HYDRA_FULL_ERROR="${HYDRA_FULL_ERROR:-1}"
 
-if [[ "${DRY_RUN:-0}" != "1" && "${CHECK_JUDGE:-1}" == "1" ]]; then
+if [[ "${CHECK_JUDGE:-1}" == "1" ]]; then
     "${PYTHON_BIN}" -m uni_agent.tasks.deepeyes.reward
 fi
 
@@ -178,11 +178,5 @@ TRAIN_ARGS=(
     trainer.resume_from_path="${RESUME_FROM_PATH:-null}"
     trainer.default_local_dir="${CHECKPOINT_DIR}"
 )
-
-if [[ "${DRY_RUN:-0}" == "1" ]]; then
-    printf '%q ' "${PYTHON_BIN}" -m verl.trainer.main_ppo "${TRAIN_ARGS[@]}" "$@"
-    printf '\n'
-    exit 0
-fi
 
 exec "${PYTHON_BIN}" -m verl.trainer.main_ppo "${TRAIN_ARGS[@]}" "$@"
