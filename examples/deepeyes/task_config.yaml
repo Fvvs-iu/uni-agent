@@ -17,6 +17,7 @@
     system_prompt: >-
       You are a helpful assistant. You can call functions to assist with the user query.
       Important: You must call only one function at a time.
+      Put the final concise answer inside exactly one <answer>...</answer> block.
     image_tool:
       min_dimension: 28
       max_aspect_ratio: 100
