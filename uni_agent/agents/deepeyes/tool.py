@@ -63,7 +63,6 @@ class ImageZoomInTool(Tool):
         self._image = coerce_image(image, timeout=cfg.fetch_timeout_seconds)
 
     async def run(self, args: dict[str, Any], *, timeout: float | None = None) -> ToolResult:
-        del timeout
         cfg: ImageZoomInConfig = self.config  # type: ignore[assignment]
         try:
             bbox = processor_safe_bbox(

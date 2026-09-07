@@ -40,7 +40,6 @@ class DeepEyesAgentConfig(AgentConfig):
         ge=0,
         description="Retries after transient HTTP failures. Set to zero for long-running policy requests.",
     )
-    action_timeout_seconds: float | None = Field(default=None, gt=0.0)
     image_tool: ImageZoomInConfig = Field(default_factory=ImageZoomInConfig)
 
 
@@ -156,7 +155,6 @@ class DeepEyesAgent(Agent):
                         result = await toolbox.call(
                             tool_name,
                             function.get("arguments"),
-                            timeout=cfg.action_timeout_seconds,
                         )
                         successful = (
                             result.status == "ok"
