@@ -21,7 +21,6 @@ class DeepEyesTaskConfig(TaskConfig):
     name: str = "deepeyes"
     question: str = Field(min_length=1)
     ground_truth: str
-    data_source: str = "deepeyes"
     reward: DeepEyesRewardConfig = Field(default_factory=DeepEyesRewardConfig)
 
 
@@ -43,45 +42,48 @@ class DeepEyesTask(Task):
             )
 
         final_answer_value = agent_result.output.get("final_answer")
-        final_answer = final_answer_value if isinstance(final_answer_value, str) else None
-        reward_context: dict[str, Any] = {
-            "question": cfg.question,
-            "finished": agent_result.finished is True,
-            "final_answer": final_answer,
-            "tool_calls": agent_result.info.get("tool_calls", 0),
-            "tool_successes": agent_result.info.get("tool_successes", 0),
-            "tool_errors": agent_result.info.get("tool_errors", 0),
+        final_answer = final_answer_value if isinstance(final_answer_value, str) else ""
+        telemetry = {
+            "steps": int(agent_result.info.get("steps", 0) or 0),
+            "tool_calls": int(agent_result.info.get("tool_calls", 0) or 0),
+            "tool_successes": int(agent_result.info.get("tool_successes", 0) or 0),
+            "tool_errors": int(agent_result.info.get("tool_errors", 0) or 0),
+            "prompt_tokens": int(agent_result.info.get("prompt_tokens", 0) or 0),
+            "completion_tokens": int(agent_result.info.get("completion_tokens", 0) or 0),
+            "total_tokens": int(agent_result.info.get("total_tokens", 0) or 0),
         }
+        finished = agent_result.finished is True
         score = await asyncio.to_thread(
             compute_score,
-            cfg.data_source,
-            final_answer or "",
+            final_answer,
             cfg.ground_truth,
-            reward_context,
+            question=cfg.question,
+            finished=finished,
+            tool_successes=telemetry["tool_successes"],
             reward_config=cfg.reward,
         )
 
+        # ``reward``, ``accuracy``, and ``finished`` have canonical TaskResult
+        # fields. Keep only scorer context and episode telemetry in extra_info so
+        # the framework can forward it as runner reward context unchanged.
         extra_info: dict[str, Any] = {
-            **score,
+            **{key: value for key, value in score.items() if key not in {"score", "acc"}},
             "termination_reason": agent_result.info.get("termination_reason", "unknown"),
-            "steps": agent_result.info.get("steps", 0),
-            "prompt_tokens": agent_result.info.get("prompt_tokens", 0),
-            "completion_tokens": agent_result.info.get("completion_tokens", 0),
-            "total_tokens": agent_result.info.get("total_tokens", 0),
+            **telemetry,
         }
         logger.info(
             "DeepEyes task done: reward=%s acc=%s finished=%s calls=%s successes=%s errors=%s reason=%s",
             score["score"],
             score["acc"],
-            agent_result.finished,
-            score["tool_calls"],
-            score["tool_successes"],
-            score["tool_errors"],
+            finished,
+            telemetry["tool_calls"],
+            telemetry["tool_successes"],
+            telemetry["tool_errors"],
             extra_info["termination_reason"],
         )
         return TaskResult(
             reward=float(score["score"]),
             accuracy=float(score["acc"]),
-            finished=agent_result.finished is True,
+            finished=finished,
             extra_info=extra_info,
         )

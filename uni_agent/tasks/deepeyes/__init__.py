@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .reward import DeepEyesJudgeConfig, DeepEyesRewardConfig, compute_score
+from .reward import DeepEyesJudgeConfig, DeepEyesRewardConfig, compute_score, score_from_runner_result
 from .task import DeepEyesTask, DeepEyesTaskConfig
 
 __all__ = [
@@ -11,4 +11,5 @@ __all__ = [
     "DeepEyesTask",
     "DeepEyesTaskConfig",
     "compute_score",
+    "score_from_runner_result",
 ]

@@ -61,7 +61,6 @@ class DeepEyesDataset(RLHFDataset):
             "name": "deepeyes",
             "question": extra_info["question"],
             "ground_truth": str(reward_model["ground_truth"]),
-            "data_source": data_source,
             "metadata": {"index": sample_index},
         }
 

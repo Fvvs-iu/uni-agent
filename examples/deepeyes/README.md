@@ -29,7 +29,7 @@ full DeepEyes benchmark.
 - An OpenAI-compatible Judge that can decide whether a prediction is
   semantically equivalent to the reference answer.
 
-Run commands from the repository root. The reported 4B result used a 7+1 
+Run commands from the repository root. The reported 4B result used a 7+1
 NPU setup (seven devices for policy training and rollout, plus one for the
 Judge); that environment-specific launcher is not part of this repository.
 

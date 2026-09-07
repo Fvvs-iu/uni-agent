@@ -123,64 +123,40 @@ def check_judge(config: DeepEyesRewardConfig | None = None) -> str:
 
 
 def compute_score(
-    data_source: str,
-    solution_str: str,
+    final_answer: str,
     ground_truth: str,
-    extra_info=None,
     *,
+    question: str,
+    finished: bool,
+    tool_successes: int,
     reward_config: DeepEyesRewardConfig | None = None,
 ) -> dict[str, float]:
-    """Return DeepEyes accuracy, format, and correct-tool-use reward components."""
-    del data_source
+    """Score one structured final assistant answer.
+
+    Episode telemetry is passed explicitly; no serialized transcript parsing is
+    performed here.
+    """
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("DeepEyes reward requires a question")
+    if not isinstance(final_answer, str):
+        raise TypeError("DeepEyes final_answer must be a string")
     config = reward_config or DeepEyesRewardConfig()
-    reward_context = extra_info or {}
-    question_text = reward_context.get("question", "")
-    if not question_text:
-        raise ValueError("DeepEyes reward requires extra_info.question")
-
-    finished = reward_context.get("finished") is not False
-    tool_call_count = _nonnegative_int(reward_context.get("tool_calls"))
-    tool_success_count = _nonnegative_int(reward_context.get("tool_successes"))
-    tool_error_count = _nonnegative_int(reward_context.get("tool_errors"))
-    if tool_call_count is None:
-        tool_call_count = int(_has_tool_usage(solution_str))
-    if tool_success_count is None:
-        tool_success_count = 0
-    if tool_error_count is None:
-        tool_error_count = 0
-
-    structured_answer = reward_context.get("final_answer")
-    has_structured_answer = isinstance(structured_answer, str)
-    answer_source = structured_answer if has_structured_answer else solution_str
-    answer_text, format_error, answer_tags = _extract_answer_details(
-        answer_source,
-        allow_prefilled_think=has_structured_answer,
-    )
+    answer_text, format_error, answer_tags = _parse_final_answer(final_answer)
     if not finished:
         return _reward_result(
             accuracy_reward=0.0,
             format_error=True,
-            has_successful_tool_usage=_has_successful_tool_usage(tool_success_count),
-            finished=False,
-            tool_call_count=tool_call_count,
-            tool_success_count=tool_success_count,
-            tool_error_count=tool_error_count,
+            tool_successes=tool_successes,
             answer_tags=answer_tags,
         )
 
-    # Keep this guard before the Judge request.  Besides being invalid output
-    # according to the original DeepEyes reward, a very long answer can push
-    # the Judge prompt beyond its serving context window and fail the entire
-    # rollout instead of simply receiving the intended format penalty.
-    if len(answer_text) >= config.max_answer_chars:
+    # Keep this guard before the Judge request: empty/very long output must
+    # not push the Judge prompt beyond its serving context window.
+    if not answer_text or len(answer_text) >= config.max_answer_chars:
         return _reward_result(
             accuracy_reward=0.0,
             format_error=True,
-            has_successful_tool_usage=_has_successful_tool_usage(tool_success_count),
-            finished=True,
-            tool_call_count=tool_call_count,
-            tool_success_count=tool_success_count,
-            tool_error_count=tool_error_count,
+            tool_successes=tool_successes,
             answer_tags=answer_tags,
         )
 
@@ -189,11 +165,7 @@ def compute_score(
         return _reward_result(
             accuracy_reward=0.0,
             format_error=format_error,
-            has_successful_tool_usage=_has_successful_tool_usage(tool_success_count),
-            finished=True,
-            tool_call_count=tool_call_count,
-            tool_success_count=tool_success_count,
-            tool_error_count=tool_error_count,
+            tool_successes=tool_successes,
             answer_tags=answer_tags,
             score_override=0.0,
         )
@@ -206,7 +178,7 @@ def compute_score(
                 {
                     "role": "user",
                     "content": _judge_user_prompt(
-                        question=question_text,
+                        question=question,
                         ground_truth=str(ground_truth),
                         answer=answer_text,
                     ),
@@ -222,11 +194,7 @@ def compute_score(
         return _reward_result(
             accuracy_reward=0.0,
             format_error=format_error,
-            has_successful_tool_usage=_has_successful_tool_usage(tool_success_count),
-            finished=True,
-            tool_call_count=tool_call_count,
-            tool_success_count=tool_success_count,
-            tool_error_count=tool_error_count,
+            tool_successes=tool_successes,
             answer_tags=answer_tags,
             score_override=0.0,
         )
@@ -241,31 +209,56 @@ def compute_score(
     return _reward_result(
         accuracy_reward=accuracy_reward,
         format_error=format_error,
-        has_successful_tool_usage=_has_successful_tool_usage(tool_success_count),
-        finished=True,
-        tool_call_count=tool_call_count,
-        tool_success_count=tool_success_count,
-        tool_error_count=tool_error_count,
+        tool_successes=tool_successes,
         answer_tags=answer_tags,
     )
+
+
+def score_from_runner_result(
+    *,
+    data_source: str,
+    solution_str: str,
+    ground_truth: object,
+    extra_info: dict[str, Any],
+    **_reward_manager_kwargs: Any,
+) -> dict[str, int | float | bool]:
+    """Adapt a DeepEyes TaskResult for a streaming RewardLoopWorker.
+
+    The Task has already run the Judge. This callback forwards its scalar result
+    and promotes the stable DeepEyes reward/tool components from reward_context
+    into validation metrics without running the Judge a second time.
+    """
+    del data_source, solution_str, ground_truth
+    runner_reward_info = extra_info.get("runner_reward_info")
+    if not isinstance(runner_reward_info, dict):
+        raise ValueError("DeepEyes scorer requires extra_info.runner_reward_info")
+    reward = runner_reward_info.get("reward")
+    if reward is None:
+        raise ValueError("DeepEyes runner result must contain a scalar reward")
+    metrics = runner_reward_info.get("metrics") or {}
+    reward_context = runner_reward_info.get("reward_context") or {}
+    if not isinstance(metrics, dict) or not isinstance(reward_context, dict):
+        raise ValueError("DeepEyes runner metrics and reward_context must be mappings")
+
+    result: dict[str, int | float | bool] = dict(metrics)
+    for key in ("format", "tool", "answer_tags", "tool_calls", "tool_successes", "tool_errors"):
+        value = reward_context.get(key)
+        if not isinstance(value, int | float | bool):
+            raise ValueError(f"DeepEyes runner reward_context.{key} must be numeric")
+        result[key] = value
+    result["score"] = float(reward)
+    return result
 
 
 def _reward_result(
     *,
     accuracy_reward: float,
     format_error: bool,
-    has_successful_tool_usage: bool,
-    finished: bool,
-    tool_call_count: int,
-    tool_success_count: int,
-    tool_error_count: int,
+    tool_successes: int,
     answer_tags: bool,
     score_override: float | None = None,
 ) -> dict[str, float]:
-    # Match the original DeepEyes intent: grant the conditional tool bonus only
-    # after active perception actually succeeds. A serialized tool marker or a
-    # failed execution alone must not receive the bonus.
-    tool_reward = 1.0 if has_successful_tool_usage and accuracy_reward > 0.5 else 0.0
+    tool_reward = 1.0 if tool_successes > 0 and accuracy_reward > 0.5 else 0.0
     format_reward = -1.0 if format_error else 0.0
     final_score = 0.8 * accuracy_reward + 0.2 * format_reward + 1.2 * tool_reward
     return {
@@ -273,95 +266,37 @@ def _reward_result(
         "acc": accuracy_reward,
         "format": format_reward,
         "tool": tool_reward,
-        "finished": float(finished),
-        "tool_calls": float(tool_call_count),
-        "tool_successes": float(tool_success_count),
-        "tool_errors": float(tool_error_count),
         "answer_tags": float(answer_tags),
     }
 
 
-def _nonnegative_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        result = int(value)
-    except (TypeError, ValueError):
-        return None
-    return max(0, result)
-
-
-def _has_successful_tool_usage(tool_successes: int) -> bool:
-    return tool_successes > 0
-
-
-def _has_tool_usage(solution_str: str) -> bool:
-    return bool(
-        re.search(r"<tool_call>.*?</tool_call>", solution_str, re.DOTALL)
-        or re.search(r"<tool_response>.*?</tool_response>", solution_str, re.DOTALL)
-    )
-
-
-def _extract_answer(solution_str: str) -> tuple[str, bool]:
-    answer, format_error, _ = _extract_answer_details(solution_str, allow_prefilled_think=False)
-    return answer, format_error
-
-
-def _extract_answer_details(
-    solution_str: str,
-    *,
-    allow_prefilled_think: bool,
-) -> tuple[str, bool, bool]:
-    final_content = _last_assistant_content(solution_str)
+def _parse_final_answer(final_content: str) -> tuple[str, bool, bool]:
+    """Extract answer text from one final assistant content value."""
     think_open_count = final_content.count("<think>")
     think_close_count = final_content.count("</think>")
     # Qwen3.5's native chat template pre-fills ``<think>`` in the generation
     # prompt. It is therefore part of prompt_ids, while the structured final
     # assistant content starts after that token and contains only ``</think>``.
     # Treat exactly one such missing opener as a valid native turn boundary.
-    prefilled_think = allow_prefilled_think and think_open_count == 0 and think_close_count == 1
+    prefilled_think = think_open_count == 0 and think_close_count == 1
     format_error = think_open_count != think_close_count and not prefilled_think
     answer_region = (
         final_content.split("</think>")[-1].strip() if "</think>" in final_content else final_content.strip()
     )
-    answer_region = answer_region.replace("<|im_end|>", "").strip()
     answer_open_count = answer_region.count("<answer>")
     answer_close_count = answer_region.count("</answer>")
     match = re.search(r"<answer>(.*?)</answer>", answer_region, re.DOTALL)
     answer_tags = answer_open_count == 1 and answer_close_count == 1 and match is not None
-    if answer_open_count != answer_close_count:
+    if not answer_tags:
         format_error = True
 
-    if match:
+    if answer_tags and match:
         answer = match.group(1).strip()
     else:
-        # Keep a usable plain-text answer for semantic judging, but preserve
-        # the original DeepEyes format penalty when <answer> tags are absent.
-        format_error = True
-        tool_response_match = re.search(
-            r"</tool_response>\s*assistant\s*\n(.*?)$",
-            answer_region,
-            re.DOTALL | re.MULTILINE,
-        )
-        if tool_response_match:
-            answer = tool_response_match.group(1).strip()
-        else:
-            answer = re.sub(r"<tool_call>.*?</tool_call>", "", answer_region, flags=re.DOTALL)
-            answer = re.sub(r"<tool_response>.*?</tool_response>", "", answer, flags=re.DOTALL)
-            answer = re.sub(r"\b(user|assistant)\b", "", answer).strip()
-    if not answer:
-        format_error = True
-        answer = final_content.strip()
+        # Plain text remains eligible for semantic judging, with a format
+        # penalty. Malformed answer blocks are likewise passed as-is.
+        answer = answer_region
     return answer, format_error, answer_tags
-
-
-def _last_assistant_content(solution_str: str) -> str:
-    matches = re.findall(
-        r"<\|im_start\|>assistant\s*\n?(.*?)(?=<\|im_end\|>)",
-        solution_str,
-        re.DOTALL,
-    )
-    return matches[-1].strip() if matches else solution_str.strip()
 
 
 def _judge_system_prompt() -> str:
