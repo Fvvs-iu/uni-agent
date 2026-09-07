@@ -1,6 +1,6 @@
 import pytest
 
-from uni_agent.gateway.session.codec import _openai_messages_to_qwen_vision_info
+from uni_agent.gateway.session.codec import _normalize_messages_for_qwen_vision_info
 
 
 def test_qwen_vision_info_unwraps_openai_multimodal_urls_without_mutating_messages():
@@ -15,7 +15,7 @@ def test_qwen_vision_info_unwraps_openai_multimodal_urls_without_mutating_messag
         }
     ]
 
-    normalized = _openai_messages_to_qwen_vision_info(messages)
+    normalized = _normalize_messages_for_qwen_vision_info(messages)
 
     assert normalized[0]["content"][0]["image_url"] == "data:image/png;base64,AAAA"
     assert normalized[0]["content"][1]["video"] == "file:///tmp/demo.mp4"
@@ -34,4 +34,4 @@ def test_qwen_vision_info_unwraps_openai_multimodal_urls_without_mutating_messag
 )
 def test_qwen_vision_info_rejects_invalid_openai_url_blocks(part):
     with pytest.raises(ValueError, match="url"):
-        _openai_messages_to_qwen_vision_info([{"role": "user", "content": [part]}])
+        _normalize_messages_for_qwen_vision_info([{"role": "user", "content": [part]}])

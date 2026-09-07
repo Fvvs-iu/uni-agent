@@ -46,8 +46,8 @@ def _canonical_tools_hash(tools: list[dict[str, Any]]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _openai_url_value(value: Any, *, field: str) -> str:
-    """Return a validated URL from an OpenAI URL content field."""
+def _normalize_url_value(value: Any, *, field: str) -> str:
+    """Normalize a URL field to a non-empty string."""
     if isinstance(value, dict):
         if "url" not in value:
             raise ValueError(f"{field} must contain a url field")
@@ -57,14 +57,12 @@ def _openai_url_value(value: Any, *, field: str) -> str:
     return value
 
 
-def _openai_messages_to_qwen_vision_info(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert OpenAI multimodal URL blocks for ``qwen_vl_utils``.
+def _normalize_messages_for_qwen_vision_info(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize multimodal message content for ``qwen_vl_utils``.
 
-    OpenAI represents an image URL as ``{"image_url": {"url": ...}}`` while
-    qwen_vl_utils expects the value of ``image_url`` itself to be a string (or
-    an ``image`` value to be a PIL image). Keep the session messages in their
-    original OpenAI shape for chat-template rendering and normalize only the
-    copy passed to the vision extractor.
+    ``qwen_vl_utils`` expects ``image_url`` values to be URL strings and
+    video URLs under the ``video`` key. Normalize only the copied messages
+    passed to the vision extractor.
     """
     normalized_messages: list[dict[str, Any]] = []
     for message in messages:
@@ -81,9 +79,9 @@ def _openai_messages_to_qwen_vision_info(messages: list[dict[str, Any]]) -> list
                 continue
             normalized_part = dict(part)
             if "image_url" in normalized_part:
-                normalized_part["image_url"] = _openai_url_value(normalized_part["image_url"], field="image_url")
+                normalized_part["image_url"] = _normalize_url_value(normalized_part["image_url"], field="image_url")
             if "video_url" in normalized_part:
-                normalized_part["video"] = _openai_url_value(normalized_part.pop("video_url"), field="video_url")
+                normalized_part["video"] = _normalize_url_value(normalized_part.pop("video_url"), field="video_url")
             normalized_parts.append(normalized_part)
         normalized_message["content"] = normalized_parts
         normalized_messages.append(normalized_message)
@@ -196,7 +194,7 @@ class MessageCodec:
         from qwen_vl_utils import process_vision_info
 
         return process_vision_info(
-            _openai_messages_to_qwen_vision_info(messages),
+            _normalize_messages_for_qwen_vision_info(messages),
             image_patch_size=image_patch_size,
             return_video_metadata=True,
         )
