@@ -35,7 +35,6 @@ class ImageZoomInConfig(BaseModel):
 
     min_dimension: int = Field(default=28, gt=0)
     max_aspect_ratio: float = Field(default=100.0, gt=1.0)
-    coordinate_scale: float = Field(default=1000.0, gt=0.0)
     fetch_timeout_seconds: float = Field(default=30.0, gt=0.0)
 
     model_config = ConfigDict(extra="forbid")
@@ -70,7 +69,6 @@ class ImageZoomInTool(Tool):
                 image_size=self._image.size,
                 min_dimension=cfg.min_dimension,
                 max_aspect_ratio=cfg.max_aspect_ratio,
-                coordinate_scale=cfg.coordinate_scale,
             )
         except ValueError as error:
             return ImageZoomInResult(
@@ -133,7 +131,6 @@ def processor_safe_bbox(
     image_size: tuple[int, int],
     min_dimension: int,
     max_aspect_ratio: float,
-    coordinate_scale: float,
 ) -> tuple[int, int, int, int]:
     """Convert normalized coordinates into a processor-safe pixel crop."""
 
@@ -149,10 +146,10 @@ def processor_safe_bbox(
         raise ValueError("bbox_2d must satisfy x1 < x2 and y1 < y2")
 
     image_width, image_height = image_size
-    left = left / coordinate_scale * image_width
-    right = right / coordinate_scale * image_width
-    top = top / coordinate_scale * image_height
-    bottom = bottom / coordinate_scale * image_height
+    left = left / 1000.0 * image_width
+    right = right / 1000.0 * image_width
+    top = top / 1000.0 * image_height
+    bottom = bottom / 1000.0 * image_height
     left = max(0.0, left)
     top = max(0.0, top)
     right = min(float(image_width), right)

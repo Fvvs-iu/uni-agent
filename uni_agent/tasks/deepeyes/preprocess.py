@@ -20,10 +20,11 @@ DATASET_REPO = "ChenShawn/DeepEyes-Datasets-47k"
 DATASET_FILENAME = "data_0.1.2_visual_toolbox_v2.parquet"
 DEFAULT_VALIDATION_SIZE = 48
 DEFAULT_BATCH_SIZE = 512
+DEFAULT_SEED = 42
 
 
-def validation_positions(*, row_count: int, validation_size: int) -> list[int]:
-    """Choose random validation row positions."""
+def validation_positions(*, row_count: int, validation_size: int, seed: int = DEFAULT_SEED) -> list[int]:
+    """Choose reproducible random validation row positions."""
 
     import numpy as np
 
@@ -31,7 +32,7 @@ def validation_positions(*, row_count: int, validation_size: int) -> list[int]:
         raise ValueError("validation_size must be positive")
     if validation_size >= row_count:
         raise ValueError(f"validation_size must be smaller than source rows ({row_count})")
-    positions = np.random.default_rng().choice(row_count, validation_size, replace=False)
+    positions = np.random.default_rng(seed).choice(row_count, validation_size, replace=False)
     return sorted(int(position) for position in positions)
 
 
@@ -43,6 +44,7 @@ def prepare_deepeyes(
     filename: str = DATASET_FILENAME,
     revision: str = "main",
     validation_size: int = DEFAULT_VALIDATION_SIZE,
+    seed: int = DEFAULT_SEED,
     batch_size: int = DEFAULT_BATCH_SIZE,
     compression: str | None = "snappy",
     overwrite: bool = False,
@@ -84,6 +86,7 @@ def prepare_deepeyes(
     selected_positions = validation_positions(
         row_count=row_count,
         validation_size=validation_size,
+        seed=seed,
     )
 
     with tempfile.TemporaryDirectory(prefix="deepeyes-prepare-", dir=destination) as temporary_dir:
@@ -105,7 +108,8 @@ def prepare_deepeyes(
             "requested_revision": revision if source_file is None else None,
             "resolved_revision": resolved_revision,
             "source_file": str(source_path),
-            "sampler": "numpy.random.default_rng().choice(row_count, validation_size, replace=False)",
+            "sampler": "numpy.random.default_rng(seed).choice(row_count, validation_size, replace=False)",
+            "seed": seed,
             "source_rows": row_count,
             "train_rows": len(train_positions),
             "validation_rows": len(actual_validation_positions),
@@ -271,6 +275,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--filename", default=DATASET_FILENAME)
     parser.add_argument("--revision", default="main")
     parser.add_argument("--validation-size", type=int, default=DEFAULT_VALIDATION_SIZE)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Random seed for the validation split (default: 42).")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument(
         "--compression",
@@ -290,6 +295,7 @@ def main() -> None:
         filename=args.filename,
         revision=args.revision,
         validation_size=args.validation_size,
+        seed=args.seed,
         batch_size=args.batch_size,
         compression=None if args.compression == "none" else args.compression,
         overwrite=args.overwrite,

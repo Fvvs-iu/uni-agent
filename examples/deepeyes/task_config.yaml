@@ -17,6 +17,5 @@
     image_tool:
       min_dimension: 28
       max_aspect_ratio: 100
-      coordinate_scale: 1000
       fetch_timeout_seconds: 30
     model: {}

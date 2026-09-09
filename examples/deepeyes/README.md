@@ -137,7 +137,7 @@ reward = 0.8 * accuracy + 0.2 * format + 1.2 * tool
 `accuracy` is the binary Judge result. `format` is `0` for valid output and
 `-1` for invalid output. `tool` is `1` only when at least one crop succeeds and
 the final answer is correct; failed or malformed calls receive no tool bonus.
-Judge settings and generation limits are defined in the task config.
+Judge settings and optional agent token budgets are defined in the task config; training rollout limits are configured by the launcher's `MAX_RESPONSE_LENGTH`.
 
 ## Implementation map
 
