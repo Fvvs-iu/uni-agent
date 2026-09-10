@@ -275,7 +275,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--filename", default=DATASET_FILENAME)
     parser.add_argument("--revision", default="main")
     parser.add_argument("--validation-size", type=int, default=DEFAULT_VALIDATION_SIZE)
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Random seed for the validation split (default: 42).")
+    parser.add_argument(
+        "--seed", type=int, default=DEFAULT_SEED, help="Random seed for the validation split (default: 42)."
+    )
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument(
         "--compression",
