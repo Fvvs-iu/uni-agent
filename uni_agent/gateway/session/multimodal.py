@@ -128,7 +128,7 @@ def _normalize_messages_for_qwen_vision_info(messages: list[dict[str, Any]]) -> 
 
 
 def validate_image_count(messages: list[dict[str, Any]], image_data: list[Any] | None) -> None:
-    """Require one resolved image per image block, in message order."""
+    """Require one image per block; count alone cannot detect reordered images."""
     block_count = count_media_blocks(messages, {"image", "image_url"})
     image_count = len(image_data) if image_data is not None else 0
     if block_count != image_count:
@@ -214,7 +214,12 @@ class MultimodalCodec:
         return patch_size
 
     async def extract(self, messages: list[dict[str, Any]]) -> tuple[list[Any] | None, list[Any] | None]:
-        """Resolve media only for processor-backed requests containing media blocks."""
+        """Resolve media only for processor-backed requests containing media blocks.
+
+        A custom extractor must return images in message/content-block order,
+        with exactly one processor-compatible object per image block. Count
+        validation detects missing or surplus objects, but not reordering.
+        """
         if self._processor is None or not has_media_blocks(messages):
             return None, None
 
@@ -262,9 +267,10 @@ class MultimodalCodec:
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Return the message view required by verl's CT builder.
 
-        verl VL builders discover images inside message blocks. Bind resolved
-        Gateway images to temporary blocks so verl can use its existing merge
-        logic without changing the stored OpenAI messages or CT algorithm.
+        ``image_data`` covers the complete ``updated_messages``: one resolved
+        image per image block, in message and content-block order. Bind those
+        images to temporary blocks so verl can use its existing merge logic
+        without changing the stored OpenAI messages or CT algorithm.
         """
         if video_data:
             raise ValueError("Continuous Token context merging does not currently support incremental video data")

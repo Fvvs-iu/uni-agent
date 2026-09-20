@@ -106,6 +106,7 @@ class MessageCodec:
             mm_processor_kwargs=self._mm_processor_kwargs,
             processor=processor,
         )
+        # Gateway currently opens incremental image CT only for Qwen VL builders.
         self._multimodal = MultimodalCodec(
             processor,
             vision_info_extractor=vision_info_extractor,
@@ -219,7 +220,10 @@ class MessageCodec:
     ) -> tuple[list[int], list[int], list[float] | None]:
         """Merge appended context and align response metadata.
 
-        ``image_data`` holds the ordered images for all updated messages.
+        ``image_data`` contains already-resolved images for the *complete*
+        ``updated_messages`` (history plus appended messages), one per image
+        block in message and content-block order. It is not just the newly
+        appended images.
         The multimodal component prepares the temporary message view required
         by verl; the CT builder performs the token merge and metadata alignment.
         """
