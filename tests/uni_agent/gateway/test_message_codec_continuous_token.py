@@ -91,3 +91,93 @@ def test_deepseek_v4_codec_uses_continuous_token_without_chat_template():
     assert response_logprobs is not None
     assert response_logprobs[: len(assistant_ids)] == [-0.1] * len(assistant_ids)
     assert response_logprobs[len(assistant_ids) :] == [0.0] * (len(response_logprobs) - len(assistant_ids))
+
+
+class _NoPatchSizeProcessor:
+    """Multimodal processor without the Qwen ``patch_size`` attribute."""
+
+    chat_template = None
+
+    class image_processor:
+        pass
+
+
+def _image_url_message() -> dict:
+    return {
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": "image://a.png"}},
+            {"type": "text", "text": "describe"},
+        ],
+    }
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+@pytest.mark.asyncio
+async def test_extract_multi_modal_data_configured_patch_size_avoids_processor_read():
+    """A configured patch size makes the missing processor attribute harmless."""
+    from tests.uni_agent.support import FakeTokenizer
+
+    async def extractor(messages, image_patch_size, config=None):
+        assert image_patch_size == 14
+        return ["image://a.png"], None
+
+    codec = MessageCodec(
+        FakeTokenizer(),
+        processor=_NoPatchSizeProcessor(),
+        vision_info_extractor=extractor,
+        vision_info_extractor_kwargs={"image_patch_size": 14},
+    )
+
+    images, videos = await codec.extract_multi_modal_data([_image_url_message()])
+
+    assert images == ["image://a.png"]
+    assert videos is None
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+def test_merge_context_tokens_rejects_misaligned_image_data():
+    """Missing or surplus resolved images are rejected for the complete conversation."""
+    from tests.uni_agent.support import FakeProcessor, QwenVLTokenizer
+
+    tokenizer = QwenVLTokenizer()
+    codec = MessageCodec(
+        tokenizer,
+        processor=FakeProcessor(),
+        hf_model_type="qwen2_5_vl",
+    )
+    previous_messages = [{"role": "user", "content": "start"}]
+    appended_tool_image = {
+        "role": "tool",
+        "tool_call_id": "call_crop",
+        "name": "crop_image",
+        "content": [
+            {"type": "image_url", "image_url": {"url": "image://crop.png"}},
+            {"type": "text", "text": "crop"},
+        ],
+    }
+    updated_messages = [*previous_messages, {"role": "assistant", "content": "FIRST"}, appended_tool_image]
+
+    for missing_images in (None, []):
+        with pytest.raises(ValueError, match="image data must align with message blocks"):
+            codec.merge_context_tokens(
+                previous_messages, updated_messages, [1, 2, 3], [1, 1, 1], image_data=missing_images
+            )
+    with pytest.raises(ValueError, match="image data must align with message blocks"):
+        codec.merge_context_tokens(
+            previous_messages,
+            updated_messages,
+            [1, 2, 3],
+            [1, 1, 1],
+            image_data=["image://a.png", "image://b.png"],
+        )
+
+    # A history image block without its resolved object is also rejected, even
+    # when the appended messages are pure text.
+    history_messages = [_image_url_message()]
+    text_appended = [*history_messages, {"role": "assistant", "content": "FIRST"}, {"role": "user", "content": "go on"}]
+    for missing_images in (None, []):
+        with pytest.raises(ValueError, match="image data must align with message blocks"):
+            codec.merge_context_tokens(history_messages, text_appended, [1, 2, 3], [1, 1, 1], image_data=missing_images)
