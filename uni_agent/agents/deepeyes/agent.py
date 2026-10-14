@@ -13,7 +13,7 @@ from pydantic import Field
 from uni_agent.agents.react.model import OpenAICompatibleChatModel
 from uni_agent.tools import Toolbox, ToolResult
 
-from ..base import Agent, AgentConfig, AgentResult
+from ..base import Agent, AgentConfig, AgentResult, RequestSamplingConfig
 from ..registry import register_agent
 from .tool import ImageZoomInConfig, ImageZoomInResult, ImageZoomInTool, coerce_image
 
@@ -40,6 +40,8 @@ class DeepEyesAgentConfig(AgentConfig):
         ge=0,
         description="Retries after transient HTTP failures. Set to zero for long-running policy requests.",
     )
+    sampling_params_override: RequestSamplingConfig = Field(default_factory=RequestSamplingConfig)
+    max_total_tokens: int | None = Field(default=None, gt=0)
     image_tool: ImageZoomInConfig = Field(default_factory=ImageZoomInConfig)
 
 
@@ -76,10 +78,8 @@ class DeepEyesAgent(Agent):
             **cfg.image_tool.model_dump(),
         )
         toolbox = Toolbox([tool])
-        request_params = cfg.model.sampling_params()
+        request_params = cfg.sampling_params_override.sampling_params()
         request_params["tool_choice"] = "auto"
-        if cfg.model.max_tokens_per_turn is not None:
-            request_params["max_tokens"] = cfg.model.max_tokens_per_turn
         model = OpenAICompatibleChatModel(
             base_url=cfg.model.base_url,
             api_key=cfg.model.api_key,
@@ -107,13 +107,13 @@ class DeepEyesAgent(Agent):
                     info["steps"] = turn_index + 1
                     logger.info("DeepEyes agent turn %s/%s", turn_index + 1, cfg.max_turns)
                     turn_params = dict(request_params)
-                    if cfg.model.max_total_tokens is not None:
-                        remaining_tokens = cfg.model.max_total_tokens - info["completion_tokens"]
+                    if cfg.max_total_tokens is not None:
+                        remaining_tokens = cfg.max_total_tokens - info["completion_tokens"]
                         if remaining_tokens <= 0:
                             termination_reason = "token_limit"
                             logger.warning(
                                 "DeepEyes exhausted max_total_tokens=%s before turn %s",
-                                cfg.model.max_total_tokens,
+                                cfg.max_total_tokens,
                                 turn_index + 1,
                             )
                             break

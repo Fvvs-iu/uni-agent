@@ -5,7 +5,7 @@ import asyncio
 from PIL import Image
 
 import uni_agent.agents.deepeyes.agent as agent_module
-from uni_agent.agents import ModelConfig, get_agent_cls
+from uni_agent.agents import ModelConfig, RequestSamplingConfig, get_agent_cls
 from uni_agent.agents.deepeyes import DeepEyesAgent, DeepEyesAgentConfig, ImageZoomInTool
 
 
@@ -119,11 +119,9 @@ def test_deepeyes_agent_enforces_per_turn_and_total_token_budgets(monkeypatch):
     monkeypatch.setattr(agent_module, "OpenAICompatibleChatModel", _FakeModel)
     agent = DeepEyesAgent(
         DeepEyesAgentConfig(
-            model=ModelConfig(
-                base_url="http://gateway/v1",
-                max_tokens_per_turn=8,
-                max_total_tokens=10,
-            ),
+            model=ModelConfig(base_url="http://gateway/v1", model_name="policy"),
+            sampling_params_override=RequestSamplingConfig(max_tokens_per_turn=8),
+            max_total_tokens=10,
             request_max_retries=0,
         )
     )
