@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from uni_agent.gateway.session.codec import _normalize_messages_for_qwen_vision_info
+from tests.uni_agent.support import FakeProcessor, FakeTokenizer
+from uni_agent.gateway.session.codec import MessageCodec
 
 pytestmark = [pytest.mark.cpu, pytest.mark.level0]
 
@@ -21,9 +22,6 @@ async def test_default_extractor_normalizes_urls_without_mutating_messages(monke
             ],
         }
     ]
-
-    from tests.uni_agent.support import FakeProcessor, FakeTokenizer
-    from uni_agent.gateway.session.codec import MessageCodec
 
     original = copy.deepcopy(messages)
     calls = []
@@ -55,6 +53,12 @@ async def test_default_extractor_normalizes_urls_without_mutating_messages(monke
         {"type": "video_url", "video_url": {"url": ""}},
     ],
 )
-def test_qwen_vision_info_rejects_invalid_openai_url_blocks(part):
+@pytest.mark.asyncio
+async def test_default_extractor_rejects_invalid_openai_url_blocks(part, monkeypatch):
+    def process_vision_info(*args, **kwargs):
+        pytest.fail("invalid URLs must fail before media loading")
+
+    monkeypatch.setitem(sys.modules, "qwen_vl_utils", SimpleNamespace(process_vision_info=process_vision_info))
+    codec = MessageCodec(FakeTokenizer(), processor=FakeProcessor())
     with pytest.raises(ValueError, match="url"):
-        _normalize_messages_for_qwen_vision_info([{"role": "user", "content": [part]}])
+        await codec.extract_multi_modal_data([{"role": "user", "content": [part]}])

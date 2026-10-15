@@ -111,7 +111,22 @@ async def test_incremental_images_qwen_vl_accumulates_tool_images_across_turns(m
     backend = SequencedBackend([CROP_TOOL_CALL_TEXT, CROP_TOOL_CALL_TEXT, "FINAL"])
 
     source = _image_message("image://source.png", "find a crop")
-    first_messages = [source]
+    first_messages = [
+        source,
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_crop",
+                    "type": "function",
+                    "function": {"name": "crop_image", "arguments": {}},
+                }
+            ],
+        },
+        _tool_image_message("image://initial-crop.png", "initial crop"),
+        {"role": "user", "content": "find another crop"},
+    ]
     original_first = copy.deepcopy(first_messages)
     first = await _run(session, backend, first_messages, tools=CROP_TOOLS)
     assert first_messages == original_first
@@ -127,7 +142,7 @@ async def test_incremental_images_qwen_vl_accumulates_tool_images_across_turns(m
             {"type": "text", "text": "first crop"},
         ],
     }
-    second_messages = [source, assistant_one, tool_one]
+    second_messages = [*first_messages, assistant_one, tool_one]
     original_second = copy.deepcopy(second_messages)
     second = await _run(session, backend, second_messages, tools=CROP_TOOLS)
     assert second_messages == original_second
@@ -153,18 +168,30 @@ async def test_incremental_images_qwen_vl_accumulates_tool_images_across_turns(m
     [trajectory] = await session.finalize()
 
     assert [call["image_data"] for call in backend.calls] == [
-        ["image://source.png"],
-        ["image://source.png", "image://crop-one.png"],
-        ["image://source.png", "image://crop-one.png", "image://crop-two.png", "image://crop-three.png"],
+        ["image://source.png", "image://initial-crop.png"],
+        ["image://source.png", "image://initial-crop.png", "image://crop-one.png"],
+        [
+            "image://source.png",
+            "image://initial-crop.png",
+            "image://crop-one.png",
+            "image://crop-two.png",
+            "image://crop-three.png",
+        ],
     ]
     assert merge_images == [call["image_data"] for call in backend.calls[1:]]
     assert extraction_calls == [first_messages, [tool_one], [tool_two]]
     # The fake processor inserts image tokens into the generation context.
-    assert [_vision_token_count(call["prompt_ids"]) for call in backend.calls] == [1, 2, 4]
+    assert [_vision_token_count(call["prompt_ids"]) for call in backend.calls] == [2, 3, 5]
     assert [call["video_data"] for call in backend.calls] == [None, None, None]
     assert [first_messages, second_messages, third_messages] == original_messages
     assert trajectory.multi_modal_data == {
-        "images": ["image://source.png", "image://crop-one.png", "image://crop-two.png", "image://crop-three.png"]
+        "images": [
+            "image://source.png",
+            "image://initial-crop.png",
+            "image://crop-one.png",
+            "image://crop-two.png",
+            "image://crop-three.png",
+        ]
     }
     assert trajectory.response_ids
     assert len(trajectory.response_ids) == len(trajectory.response_mask) == len(trajectory.response_logprobs)
@@ -175,40 +202,6 @@ async def test_incremental_images_qwen_vl_accumulates_tool_images_across_turns(m
         for mask, logprob in zip(trajectory.response_mask, trajectory.response_logprobs, strict=True)
         if mask == 0
     )
-
-
-@pytest.mark.cpu
-@pytest.mark.level0
-@pytest.mark.asyncio
-async def test_incremental_images_initial_request_with_tool_image_history():
-    """Encode a first request that already contains tool-returned images."""
-    codec = _qwen_vl_codec(vision_info_extractor=fake_vision_info_extractor)
-    session = GatewaySession(SessionHandle(session_id="incremental-images-initial-tool-history"), codec)
-    backend = SequencedBackend(["FIRST"])
-    messages = [
-        _image_message("image://source.png", "find a crop"),
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call_crop",
-                    "type": "function",
-                    "function": {"name": "crop_image", "arguments": "{}"},
-                }
-            ],
-        },
-        _tool_image_message("image://crop.png", "crop"),
-        {"role": "user", "content": "what do you see"},
-    ]
-
-    await _run(session, backend, messages)
-    [trajectory] = await session.finalize()
-
-    assert backend.calls[0]["image_data"] == ["image://source.png", "image://crop.png"]
-    assert _vision_token_count(backend.calls[0]["prompt_ids"]) == 2
-    assert trajectory.multi_modal_data == {"images": ["image://source.png", "image://crop.png"]}
-    assert len(trajectory.response_ids) == len(trajectory.response_mask)
 
 
 @pytest.mark.cpu
@@ -321,46 +314,6 @@ async def test_generic_vl_builder_accepts_incremental_images():
 @pytest.mark.cpu
 @pytest.mark.level0
 @pytest.mark.asyncio
-async def test_incremental_images_mismatch_does_not_pollute_accepted_chain(monkeypatch):
-    """Reject unresolved appended image blocks and keep the chain usable."""
-    codec = _qwen_vl_codec(vision_info_extractor=fake_vision_info_extractor)
-    session = GatewaySession(SessionHandle(session_id="incremental-images-mismatch"), codec)
-    backend = SequencedBackend(["FIRST", "SECOND"])
-    first_messages = [_image_message("image://source.png", "describe")]
-    bad_messages = [
-        *first_messages,
-        {"role": "assistant", "content": "FIRST"},
-        _tool_image_message("image://crop.png", "crop"),
-    ]
-    good_messages = [
-        *first_messages,
-        {"role": "assistant", "content": "FIRST"},
-        {"role": "user", "content": "text only follow-up"},
-    ]
-
-    async def extract_without_images(messages):
-        return None, None
-
-    await _run(session, backend, first_messages)
-    monkeypatch.setattr(codec, "extract_multi_modal_data", extract_without_images)
-    with pytest.raises(ValueError, match="image data must align with message blocks"):
-        await _run(session, backend, bad_messages)
-    monkeypatch.undo()
-    outcome = await _run(session, backend, good_messages)
-    [trajectory] = await session.finalize()
-
-    assert outcome.finish_reason == "stop"
-    assert [call["image_data"] for call in backend.calls] == [
-        ["image://source.png"],
-        ["image://source.png"],
-    ]
-    assert trajectory.multi_modal_data == {"images": ["image://source.png"]}
-    assert FakeTokenizer().decode(trajectory.response_ids).endswith("SECOND")
-
-
-@pytest.mark.cpu
-@pytest.mark.level0
-@pytest.mark.asyncio
 async def test_incremental_images_survive_last_assistant_rollback():
     """Rewrite the last assistant and append a new image on the rolled-back chain."""
     codec = _qwen_vl_codec(vision_info_extractor=fake_vision_info_extractor)
@@ -391,7 +344,7 @@ async def test_incremental_images_survive_last_assistant_rollback():
 @pytest.mark.cpu
 @pytest.mark.level0
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_stage", ["extract", "merge"])
+@pytest.mark.parametrize("failure_stage", ["missing_media", "extract", "merge"])
 async def test_incremental_image_failure_preserves_chain(monkeypatch, failure_stage):
     codec = _qwen_vl_codec(vision_info_extractor=fake_vision_info_extractor)
     session = GatewaySession(SessionHandle(session_id="image-failure"), codec)
@@ -401,23 +354,31 @@ async def test_incremental_image_failure_preserves_chain(monkeypatch, failure_st
     history = [*first, {"role": "assistant", "content": "FIRST"}]
 
     async def fail_extract(messages):
+        if failure_stage == "missing_media":
+            return None, None
         raise RuntimeError("image failure")
 
     def fail_merge(*args, **kwargs):
         raise RuntimeError("image failure")
 
     with monkeypatch.context() as patch:
-        if failure_stage == "extract":
+        if failure_stage in {"missing_media", "extract"}:
             patch.setattr(codec, "extract_multi_modal_data", fail_extract)
         else:
             patch.setattr(codec._continuous_token_builder, "merge_context_tokens", fail_merge)
-        with pytest.raises(RuntimeError, match="image failure"):
-            await _run(session, backend, [*history, _image_message("image://bad.png", "bad")])
-    await _run(session, backend, [*history, {"role": "user", "content": "continue"}])
+        error, reason = (
+            (ValueError, "image data must align with message blocks")
+            if failure_stage == "missing_media"
+            else (RuntimeError, "image failure")
+        )
+        with pytest.raises(error, match=reason):
+            await _run(session, backend, [*history, _tool_image_message("image://bad.png", "bad")])
+    outcome = await _run(session, backend, [*history, {"role": "user", "content": "continue"}])
     [trajectory] = await session.finalize()
     assert trajectory.multi_modal_data == {"images": ["image://source.png"]}
-    assert len(backend.calls) == 2
-    assert backend.calls[-1]["image_data"] == ["image://source.png"]
+    assert outcome.finish_reason == "stop"
+    assert [call["image_data"] for call in backend.calls] == [["image://source.png"], ["image://source.png"]]
+    assert FakeTokenizer().decode(trajectory.response_ids).endswith("SECOND")
 
 
 @pytest.mark.cpu

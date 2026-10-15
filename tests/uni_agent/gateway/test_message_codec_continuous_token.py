@@ -138,46 +138,14 @@ async def test_extract_multi_modal_data_configured_patch_size_avoids_processor_r
 
 @pytest.mark.cpu
 @pytest.mark.level0
-def test_merge_context_tokens_rejects_misaligned_image_data():
-    """Missing or surplus resolved images are rejected for the complete conversation."""
+@pytest.mark.parametrize("has_history_image", [False, True], ids=["no-url-fallback", "requires-history-images"])
+def test_merge_context_tokens_requires_complete_resolved_images(has_history_image):
     from tests.uni_agent.support import FakeProcessor, QwenVLTokenizer
 
-    tokenizer = QwenVLTokenizer()
-    codec = MessageCodec(
-        tokenizer,
-        processor=FakeProcessor(),
-        hf_model_type="qwen2_5_vl",
-    )
-    previous_messages = [{"role": "user", "content": "start"}]
-    appended_tool_image = {
-        "role": "tool",
-        "tool_call_id": "call_crop",
-        "name": "crop_image",
-        "content": [
-            {"type": "image_url", "image_url": {"url": "image://crop.png"}},
-            {"type": "text", "text": "crop"},
-        ],
-    }
-    updated_messages = [*previous_messages, {"role": "assistant", "content": "FIRST"}, appended_tool_image]
-
-    for missing_images in (None, []):
-        with pytest.raises(ValueError, match="image data must align with message blocks"):
-            codec.merge_context_tokens(
-                previous_messages, updated_messages, [1, 2, 3], [1, 1, 1], image_data=missing_images
-            )
+    codec = MessageCodec(QwenVLTokenizer(), processor=FakeProcessor(), hf_model_type="qwen2_5_vl")
+    previous_messages = [_image_url_message()] if has_history_image else [{"role": "user", "content": "start"}]
+    updated_messages = [*previous_messages, {"role": "assistant", "content": "FIRST"}, _image_url_message()]
+    # None must not fall back to URLs; supplying only new images must not omit history.
+    image_data = ["image://a.png"] if has_history_image else None
     with pytest.raises(ValueError, match="image data must align with message blocks"):
-        codec.merge_context_tokens(
-            previous_messages,
-            updated_messages,
-            [1, 2, 3],
-            [1, 1, 1],
-            image_data=["image://a.png", "image://b.png"],
-        )
-
-    # A history image block without its resolved object is also rejected, even
-    # when the appended messages are pure text.
-    history_messages = [_image_url_message()]
-    text_appended = [*history_messages, {"role": "assistant", "content": "FIRST"}, {"role": "user", "content": "go on"}]
-    for missing_images in (None, []):
-        with pytest.raises(ValueError, match="image data must align with message blocks"):
-            codec.merge_context_tokens(history_messages, text_appended, [1, 2, 3], [1, 1, 1], image_data=missing_images)
+        codec.merge_context_tokens(previous_messages, updated_messages, [1, 2, 3], [1, 1, 1], image_data=image_data)
