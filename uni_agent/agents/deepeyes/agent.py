@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from io import BytesIO
@@ -63,7 +64,7 @@ class DeepEyesAgent(Agent):
             raise ValueError("deepeyes: config.model.base_url is not set")
 
         prompt = _with_system_prompt(messages)
-        source_image = _first_image(prompt, timeout=cfg.image_tool.fetch_timeout_seconds)
+        source_image = await asyncio.to_thread(_first_image, prompt, timeout=cfg.image_tool.fetch_timeout_seconds)
         transcript = messages_for_gateway(prompt)
         logger.info(
             "DeepEyes agent start: source_image=%sx%s messages=%s max_turns=%s",
