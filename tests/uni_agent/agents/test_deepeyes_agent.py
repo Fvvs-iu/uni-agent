@@ -74,6 +74,24 @@ def test_image_zoom_tool_reports_invalid_bbox():
     assert result.info == {"success": False, "error": "invalid_bbox"}
 
 
+@pytest.mark.parametrize("use_file_uri", [False, True], ids=["path", "file-uri"])
+def test_gateway_messages_embed_local_images(tmp_path, use_file_uri):
+    path = tmp_path / "source image.png"
+    Image.new("RGB", (16, 12), "red").save(path)
+    reference = path.as_uri() if use_file_uri else str(path)
+    messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": reference}}]}]
+
+    serialized = agent_module.messages_for_gateway(messages)
+    url = serialized[0]["content"][0]["image_url"]["url"]
+    path.unlink()
+    image = agent_module.coerce_image(url, timeout=1.0)
+
+    assert url.startswith("data:image/png;base64,")
+    assert image.size == (16, 12)
+    assert image.getpixel((0, 0)) == (255, 0, 0)
+    assert messages[0]["content"][0]["image_url"]["url"] == reference
+
+
 def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
     _FakeModel.instances.clear()
     monkeypatch.setattr(agent_module, "OpenAICompatibleChatModel", _FakeModel)

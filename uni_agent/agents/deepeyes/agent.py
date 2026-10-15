@@ -265,10 +265,12 @@ def _content_part_for_gateway(part: Any) -> Any:
 
 
 def image_data_url(value: Any) -> str:
-    """Encode a supported in-memory image value as an OpenAI data URL."""
+    """Encode image payloads and local files; preserve remote and data URLs."""
 
     if isinstance(value, str):
-        return value
+        if value.startswith(("data:image", "http://", "https://")):
+            return value
+        value = coerce_image(value, timeout=30.0)
     if isinstance(value, Image.Image):
         buffer = BytesIO()
         value.convert("RGB").save(buffer, format="PNG")
