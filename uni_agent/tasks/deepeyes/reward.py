@@ -187,10 +187,17 @@ def compute_score(
             temperature=config.judge.temperature,
             extra_body={"chat_template_kwargs": {"enable_thinking": config.judge.enable_thinking}},
         )
+        judgement = (response.choices[0].message.content or "").strip()
+        if re.search(r"\bINCORRECT\b", judgement, re.IGNORECASE):
+            accuracy_reward = 0.0
+        elif re.search(r"\bCORRECT\b", judgement, re.IGNORECASE):
+            accuracy_reward = 1.0
+        else:
+            raise ValueError(f"Judge returned neither CORRECT nor INCORRECT: {judgement!r}")
     except Exception as error:  # noqa: BLE001 - policy is controlled by the task config
         if config.judge.strict:
-            raise RuntimeError(f"DeepEyes judge request failed: {error}") from error
-        logger.warning("DeepEyes judge request failed; returning zero rewards: %s", error)
+            raise RuntimeError(f"DeepEyes judge evaluation failed: {error}") from error
+        logger.warning("DeepEyes judge evaluation failed; returning zero rewards: %s", error)
         return _reward_result(
             accuracy_reward=0.0,
             format_error=format_error,
@@ -198,14 +205,6 @@ def compute_score(
             answer_tags=answer_tags,
             score_override=0.0,
         )
-    judgement = (response.choices[0].message.content or "").strip()
-    if re.search(r"\bINCORRECT\b", judgement, re.IGNORECASE):
-        accuracy_reward = 0.0
-    elif re.search(r"\bCORRECT\b", judgement, re.IGNORECASE):
-        accuracy_reward = 1.0
-    else:
-        raise ValueError(f"Judge returned neither CORRECT nor INCORRECT: {judgement!r}")
-
     return _reward_result(
         accuracy_reward=accuracy_reward,
         format_error=format_error,
