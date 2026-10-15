@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from PIL import Image
 
 import uni_agent.agents.deepeyes.agent as agent_module
 from uni_agent.agents import ModelConfig, RequestSamplingConfig, get_agent_cls
 from uni_agent.agents.deepeyes import DeepEyesAgent, DeepEyesAgentConfig, ImageZoomInTool
+
+pytestmark = [pytest.mark.cpu, pytest.mark.level0]
 
 
 class _FakeModel:
