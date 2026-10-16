@@ -12,6 +12,10 @@
       enable_thinking: false
   agent:
     name: deepeyes
+    system_prompt: >-
+      You are a helpful assistant. You can call functions to assist with the user query.
+      Important: You must call only one function at a time.
+      Put the final concise answer inside exactly one <answer>...</answer> block.
     max_turns: 4
     request_timeout_seconds: 300
     image_tool:

@@ -23,17 +23,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful assistant. You can call functions to assist with the user query. "
-    "Important: You must call only one function at a time. "
-    "Put the final concise answer inside exactly one <answer>...</answer> block."
-)
-
 
 class DeepEyesAgentConfig(AgentConfig):
     """DeepEyes policy loop and image-tool settings."""
 
     name: str = "deepeyes"
+    system_prompt: str | None = Field(
+        default=None,
+        description="Optional system prompt prepended when the input has no system message.",
+    )
     max_turns: int = Field(default=4, gt=0)
     request_timeout_seconds: float = Field(default=300.0, gt=0.0)
     request_max_retries: int = Field(
@@ -63,7 +61,7 @@ class DeepEyesAgent(Agent):
         if cfg.model.base_url is None:
             raise ValueError("deepeyes: config.model.base_url is not set")
 
-        prompt = _with_system_prompt(messages)
+        prompt = _with_system_prompt(messages, cfg.system_prompt)
         source_image = await asyncio.to_thread(_first_image, prompt, timeout=cfg.image_tool.fetch_timeout_seconds)
         transcript = await asyncio.to_thread(messages_for_gateway, prompt)
         logger.info(
@@ -194,12 +192,16 @@ class DeepEyesAgent(Agent):
         )
 
 
-def _with_system_prompt(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _with_system_prompt(
+    messages: list[dict[str, Any]],
+    system_prompt: str | None,
+) -> list[dict[str, Any]]:
     if not isinstance(messages, list) or not messages:
         raise ValueError("DeepEyes task prompt must be a non-empty message list")
+
     copied = [dict(message) for message in messages]
-    if copied[0].get("role") != "system":
-        copied.insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
+    if copied[0].get("role") != "system" and system_prompt:
+        copied.insert(0, {"role": "system", "content": system_prompt})
     return copied
 
 

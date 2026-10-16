@@ -96,9 +96,11 @@ def test_gateway_messages_embed_local_images(tmp_path, use_file_uri):
 def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
     _FakeModel.instances.clear()
     monkeypatch.setattr(agent_module, "OpenAICompatibleChatModel", _FakeModel)
+    system_prompt = "Use tools when needed and return the answer."
     agent = DeepEyesAgent(
         DeepEyesAgentConfig(
             model=ModelConfig(base_url="http://gateway/v1", model_name="policy"),
+            system_prompt=system_prompt,
             max_turns=4,
         )
     )
@@ -152,7 +154,7 @@ def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
         "tool",
         "assistant",
     ]
-    assert result.transcript[0]["content"] == agent_module.DEFAULT_SYSTEM_PROMPT
+    assert result.transcript[0]["content"] == system_prompt
     tool_content = result.transcript[3]["content"]
     assert any(part.get("type") == "image_url" for part in tool_content)
     assert _FakeModel.instances[0].kwargs["sampling_params"]["tool_choice"] == "auto"
