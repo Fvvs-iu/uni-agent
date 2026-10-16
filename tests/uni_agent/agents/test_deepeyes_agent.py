@@ -94,16 +94,7 @@ def test_gateway_messages_embed_local_images(tmp_path, use_file_uri):
 
 
 def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
-    loop_progressed = threading.Event()
-    first_image = agent_module._first_image
-
-    def load_image(messages, *, timeout):
-        if not loop_progressed.wait(timeout=2.0):
-            raise TimeoutError("image loading blocked the agent event loop")
-        return first_image(messages, timeout=timeout)
-
     _FakeModel.instances.clear()
-    monkeypatch.setattr(agent_module, "_first_image", load_image)
     monkeypatch.setattr(agent_module, "OpenAICompatibleChatModel", _FakeModel)
     agent = DeepEyesAgent(
         DeepEyesAgentConfig(
@@ -122,7 +113,26 @@ def test_deepeyes_agent_round_trips_crop_and_closes_model(monkeypatch):
     ]
 
     async def run():
-        asyncio.get_running_loop().call_soon(loop_progressed.set)
+        loop = asyncio.get_running_loop()
+
+        def check_loop_progress(operation):
+            def checked(*args, **kwargs):
+                progressed = threading.Event()
+                loop.call_soon_threadsafe(progressed.set)
+                if not progressed.wait(timeout=2.0):
+                    raise TimeoutError(f"{operation.__name__} blocked the agent event loop")
+                return operation(*args, **kwargs)
+
+            return checked
+
+        for target, name in (
+            (agent_module, "_first_image"),
+            (agent_module, "messages_for_gateway"),
+            (ImageZoomInTool, "__init__"),
+            (Image.Image, "crop"),
+            (agent_module, "_tool_message"),
+        ):
+            monkeypatch.setattr(target, name, check_loop_progress(getattr(target, name)))
         return await agent.run(sandbox=object(), messages=messages, workdir="/testbed")
 
     result = asyncio.run(run())

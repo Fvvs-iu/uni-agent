@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import dataclasses
@@ -77,7 +78,7 @@ class ImageZoomInTool(Tool):
                 info={"success": False, "error": "invalid_bbox"},
             )
 
-        crop = self._image.crop(bbox)
+        crop = await asyncio.to_thread(self._image.crop, bbox)
         label = args.get("label")
         label_text = f" with label {label}" if label else ""
         return ImageZoomInResult(

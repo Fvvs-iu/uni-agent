@@ -65,7 +65,7 @@ class DeepEyesAgent(Agent):
 
         prompt = _with_system_prompt(messages)
         source_image = await asyncio.to_thread(_first_image, prompt, timeout=cfg.image_tool.fetch_timeout_seconds)
-        transcript = messages_for_gateway(prompt)
+        transcript = await asyncio.to_thread(messages_for_gateway, prompt)
         logger.info(
             "DeepEyes agent start: source_image=%sx%s messages=%s max_turns=%s",
             source_image.width,
@@ -73,7 +73,8 @@ class DeepEyesAgent(Agent):
             len(transcript),
             cfg.max_turns,
         )
-        tool = ImageZoomInTool(
+        tool = await asyncio.to_thread(
+            ImageZoomInTool,
             sandbox,
             image=source_image,
             **cfg.image_tool.model_dump(),
@@ -166,7 +167,8 @@ class DeepEyesAgent(Agent):
                             info["tool_successes"] += 1
                         else:
                             info["tool_errors"] += 1
-                        transcript.append(_tool_message(str(tool_call.get("id", "")), result))
+                        tool_message = await asyncio.to_thread(_tool_message, str(tool_call.get("id", "")), result)
+                        transcript.append(tool_message)
                         logger.info("DeepEyes tool result status=%s: %s", result.status, result.text or "")
                 else:
                     termination_reason = "max_turns"
